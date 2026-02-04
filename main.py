@@ -1,4 +1,6 @@
 import logging
+import asyncio
+from aiohttp import web
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, 
@@ -25,7 +27,7 @@ class NumerologyBot:
         self.matrix_calc = MatrixCalculator()
         self.interpretations = Interpretations()
         self.horoscope_service = HoroscopeService()
-        self.user_data_store = {}  # В продакшене используйте базу данных
+        self.user_data_store = {}
     
     async def start(self, update: Update, context: CallbackContext) -> int:
         """Начало диалога, запрос даты рождения"""
@@ -125,13 +127,17 @@ class NumerologyBot:
         await update.message.reply_text(f"📊 *Ваша нумерологическая матрица:*\n\n{matrix_display}", parse_mode='Markdown')
         
         # Отправляем интерпретации
-        interpretation = self.interpretations.generate_full_interpretation(matrix_data)
-        
-        # Разбиваем на части если слишком длинное
-        max_length = 4000
-        for i in range(0, len(interpretation), max_length):
-            part = interpretation[i:i + max_length]
-            await update.message.reply_text(part, parse_mode='Markdown')
+        try:
+            interpretation = self.interpretations.generate_full_interpretation(matrix_data)
+            
+            # Разбиваем на части если слишком длинное
+            max_length = 4000
+            for i in range(0, len(interpretation), max_length):
+                part = interpretation[i:i + max_length]
+                await update.message.reply_text(part, parse_mode='Markdown')
+        except AttributeError as e:
+            logger.error(f"Ошибка генерации интерпретации: {e}")
+            await update.message.reply_text("⚠️ Интерпретации временно недоступны.")
         
         # Показываем клавиатуру
         await self.show_main_keyboard(update, context)
@@ -148,17 +154,22 @@ class NumerologyBot:
         # Отправляем сообщение о генерации
         processing_msg = await update.message.reply_text("🔮 Генерирую ваш персональный гороскоп...")
         
-        # Получаем гороскоп
-        horoscope = await self.horoscope_service.get_daily_horoscope(user_data['matrix'])
-        
-        # Удаляем сообщение о генерации
-        await processing_msg.delete()
-        
-        # Отправляем гороскоп по частям
-        max_length = 4000
-        for i in range(0, len(horoscope), max_length):
-            part = horoscope[i:i + max_length]
-            await update.message.reply_text(part, parse_mode='Markdown')
+        try:
+            # Получаем гороскоп
+            horoscope = await self.horoscope_service.get_daily_horoscope(user_data['matrix'])
+            
+            # Удаляем сообщение о генерации
+            await processing_msg.delete()
+            
+            # Отправляем гороскоп по частям
+            max_length = 4000
+            for i in range(0, len(horoscope), max_length):
+                part = horoscope[i:i + max_length]
+                await update.message.reply_text(part, parse_mode='Markdown')
+        except Exception as e:
+            await processing_msg.delete()
+            logger.error(f"Ошибка получения гороскопа: {e}")
+            await update.message.reply_text("❌ Ошибка при получении гороскопа. Попробуйте позже.")
         
         await self.show_main_keyboard(update, context)
     
@@ -259,7 +270,11 @@ class NumerologyBot:
         except:
             pass
 
-def main():
+# Создаем простой веб-сервер для Render
+async def health_check(request):
+    return web.Response(text="Bot is running")
+
+async def start_bot():
     """Запуск бота"""
     bot = NumerologyBot()
     
@@ -283,7 +298,31 @@ def main():
     
     # Запускаем бота
     print("🤖 Бот запущен...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+
+def main():
+    """Главная функция"""
+    import threading
+    
+    # Запускаем бота в отдельном потоке
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    # Запускаем бота
+    bot_thread = threading.Thread(target=lambda: loop.run_until_complete(start_bot()))
+    bot_thread.daemon = True
+    bot_thread.start()
+    
+    # Запускаем веб-сервер для health checks
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    app.router.add_get('/health', health_check)
+    
+    port = int(os.environ.get('PORT', 8080))
+    web.run_app(app, host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
+    import os
     main()
