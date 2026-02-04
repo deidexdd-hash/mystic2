@@ -163,8 +163,7 @@ class NumerologyBot:
 
         mat = user["matrix"]
         add = ".".join(map(str, mat["additional"]))
-        txt = f"""
-📊 *ВАША МАТРИЦА* 📊
+        txt = f"""\n📊 *ВАША МАТРИЦА* 📊
 
 *Дата:* {mat['date']}
 *Знак:* {mat['zodiac']}
@@ -181,3 +180,76 @@ class NumerologyBot:
 6️⃣: {len([x for x in mat['full_array'] if x == 6])} шт.
 7️⃣: {len([x for x in mat['full_array'] if x == 7])} шт.
 8️⃣: {len([x for x in mat['full_array'] if x == 8])} шт.
+9️⃣: {len([x for x in mat['full_array'] if x == 9])} шт.
+"""
+        await update.message.reply_text(txt, parse_mode="Markdown")
+        await self.show_main_keyboard(update, None)
+
+    # --------------------- О БОТЕ ---------------------
+    async def about(self, update: Update, _: CallbackContext):
+        txt = """\n🤖 *НУМЕРОЛОГИЧЕСКИЙ БОТ* 🤖
+
+Этот бот рассчитывает вашу персональную нумерологическую матрицу и гороскопы.
+
+*Технологии*:
+• Python + python-telegram-bot 21.x
+• Groq AI (необязательно)
+• BeautifulSoup для парсинга
+
+Нажмите /start и следуйте инструкциям.
+"""
+        await update.message.reply_text(txt, parse_mode="Markdown")
+        await self.show_main_keyboard(update, None)
+
+    # --------------------- ГЛАВНОЕ МЕНЮ ---------------------
+    async def show_main_keyboard(self, update: Update, _: CallbackContext):
+        kb = [
+            [
+                KeyboardButton("🔮 Полная матрица"),
+                KeyboardButton("🌟 Гороскоп на сегодня"),
+            ],
+            [
+                KeyboardButton("📊 Только матрица 3x3"),
+                KeyboardButton("ℹ️ О боте"),
+            ],
+        ]
+        await update.message.reply_text(
+            "Выберите действие:",
+            reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True),
+        )
+
+    # --------------------- ОБРАБОТЧИК ТЕКСТА ---------------------
+    async def handle_text(self, update: Update, _: CallbackContext):
+        txt = update.message.text
+        if txt == "🔮 Полная матрица":
+            await self.full_matrix(update, None)
+        elif txt == "🌟 Гороскоп на сегодня":
+            await self.daily_horoscope(update, None)
+        elif txt == "📊 Только матрица 3x3":
+            await self.only_matrix(update, None)
+        elif txt == "ℹ️ О боте":
+            await self.about(update, None)
+        else:
+            await update.message.reply_text("Используйте кнопки или /start")
+
+    # --------------------- ОБРАБОТЧИК ОШИБОК ---------------------
+    async def error_handler(self, update: Update, ctx: CallbackContext):
+        log.error(f"Error: {ctx.error}")
+        try:
+            await update.message.reply_text("❌ Произошла ошибка.")
+        except Exception:
+            pass
+
+
+# --------------------------------------------------------------------
+# 4️⃣ СБОРКА APPLICATION
+# --------------------------------------------------------------------
+def build_application() -> Application:
+    app = Application.builder().token(Config.BOT_TOKEN).build()
+    bot = NumerologyBot()
+
+    conv = ConversationHandler(
+        entry_points=[CommandHandler("start", bot.start)],
+        states={
+            DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.receive_date)],
+            G
