@@ -1,8 +1,8 @@
-python-telegram-bot==20.8
+python-telegram-bot==21.0.0    # последняя версия, совместима с 3.13+
 python-dotenv==1.0.0
 requests==2.31.0
 beautifulsoup4==4.12.2
 groq==0.3.0
 pytz==2023.3
-aiohttp==3.8.6
+aiohttp==3.9.3               # актуальная версия, поддерживает 3.13
 python-dateutil==2.8.2
