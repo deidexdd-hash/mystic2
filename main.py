@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import threading
 from datetime import datetime
 
 from aiohttp import web
@@ -20,17 +19,23 @@ from matrix_calculator import MatrixCalculator
 from interpretations import Interpretations
 from horoscope_service import HoroscopeService
 
-# ----------------------------------- LOGGING ------------------------------------
+# --------------------------------------------------------------------
+#  1.  Логирование
+# --------------------------------------------------------------------
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
-# ---------------------------------- STATE ------------------------------------
+# --------------------------------------------------------------------
+#  2.  Диалоги
+# --------------------------------------------------------------------
 DATE, GENDER = range(2)
 
-# ---------------------------------- BOT CLASS --------------------------------
+# --------------------------------------------------------------------
+#  3.  Класс бота
+# --------------------------------------------------------------------
 class NumerologyBot:
     def __init__(self):
         self.matrix_calc = MatrixCalculator()
@@ -38,7 +43,7 @@ class NumerologyBot:
         self.horoscope_service = HoroscopeService()
         self.data_store: dict[int, dict] = {}
 
-    # ---------- COMMAND HANDLERS ----------
+    # ───── COMMAND HANDLERS ─────
     async def start(self, update: Update, ctx: CallbackContext) -> int:
         await update.message.reply_text(
             "👋 Добро пожаловать в бот нумерологии!\n\n"
@@ -99,7 +104,7 @@ class NumerologyBot:
         )
         return ConversationHandler.END
 
-    # ---------- HELPERS ----------
+    # ───── UI HELPERS ─────
     async def full_matrix(self, update: Update, _: CallbackContext):
         uid = update.effective_user.id
         user = self.data_store.get(uid)
@@ -115,7 +120,7 @@ class NumerologyBot:
         try:
             interp = self.interpretations.generate_full_interpretation(user["matrix"])
             for i in range(0, len(interp), 4096):
-                await update.message.reply_text(interp[i : i + 4096], parse_mode="Markdown")
+                await update.message.reply_text(interp[i:i + 4096], parse_mode="Markdown")
         except Exception as exc:
             logger.error(f"Error generating interpretation: {exc}")
             await update.message.reply_text("⚠️ Интерпретации временно недоступны.")
@@ -133,7 +138,7 @@ class NumerologyBot:
             horo = await self.horoscope_service.get_daily_horoscope(user["matrix"])
             await proc_msg.delete()
             for i in range(0, len(horo), 4096):
-                await update.message.reply_text(horo[i : i + 4096], parse_mode="Markdown")
+                await update.message.reply_text(horo[i:i + 4096], parse_mode="Markdown")
         except Exception as exc:
             await proc_msg.delete()
             logger.error(f"Error getting horoscope: {exc}")
@@ -179,7 +184,7 @@ class NumerologyBot:
 Этот бот рассчитывает вашу персональную нумерологическую матрицу и гороскопы.
 
 *Технологии:*
-• Python + python‑telegram‑bot 21.x
+• Python + python‑telegram‑bot 21.x
 • Groq AI (необязательно)
 • BeautifulSoup для парсинга
 
@@ -195,9 +200,7 @@ class NumerologyBot:
             ],
             [KeyboardButton("📊 Только матрица 3x3"), KeyboardButton("ℹ️ О боте")],
         ]
-        await update.message.reply_text(
-            "Выберите действие:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
-        )
+        await update.message.reply_text("Выберите действие:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
     async def handle_text(self, update: Update, _: CallbackContext):
         txt = update.message.text
@@ -220,7 +223,9 @@ class NumerologyBot:
             pass
 
 
-# ----------------------------------- APP BUILD -----------------------------------
+# --------------------------------------------------------------------
+#  4.  Функция, собирающая Application
+# --------------------------------------------------------------------
 def build_application() -> Application:
     app = Application.builder().token(Config.BOT_TOKEN).build()
     bot = NumerologyBot()
@@ -239,34 +244,37 @@ def build_application() -> Application:
     return app
 
 
-# ----------------------------------- BOT IN SEPARATE THREAD -----------------------------------
-def run_bot_in_thread() -> None:
-    async def bot_coro():
-        app = build_application()
-        await app.initialize()
-        await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-
-    # asyncio.run() создаёт свой loop и задействует его в этом потоке
-    asyncio.run(bot_coro())
-
-
-# ----------------------------------- HEALTH‑CHECK -----------------------------------
-async def health_app() -> None:
+# --------------------------------------------------------------------
+#  5.  Health‑check сервер
+# --------------------------------------------------------------------
+async def health_server() -> None:
     web_app = web.Application()
     web_app.router.add_get("/", lambda _: web.Response(text="Bot is running"))
     web_app.router.add_get("/health", lambda _: web.Response(text="Bot is running"))
     await web._run_app(web_app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
 
 
-# ----------------------------------- MAIN ENTRY -----------------------------------
-def main() -> None:
-    # 1️⃣ Запускаем бота в отдельном потоке
-    t = threading.Thread(target=run_bot_in_thread, daemon=True)
-    t.start()
+# --------------------------------------------------------------------
+#  6.  Весь корень – один async‑main
+# --------------------------------------------------------------------
+async def main() -> None:
+    # 1️⃣ Создаём приложение
+    app = build_application()
 
-    # 2️⃣ После запуска бота стартуем только health‑check в основной нити
-    asyncio.run(health_app())
+    # 2️⃣ Запускаем health‑server в отдельной задаче
+    health_task = asyncio.create_task(health_server())
+
+    # 3️⃣ Запускаем бот (polling)
+    # (Application и updater автоматически используют наш текущий event‑loop)
+    await app.initialize()                                   # создаём bot, dispatcher, т.д.
+    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)  # блокирует до остановки
+
+    # 4️⃣ Ждём завершения обеих задач (здесь – совпадает с poll‑ing)
+    await health_task          # фактически никогда не завершится, пока бот не будет остановлен
 
 
+# --------------------------------------------------------------------
+#  7.  Точка входа
+# --------------------------------------------------------------------
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
