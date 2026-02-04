@@ -11,4 +11,5 @@ services:
       - key: GROQ_API_KEY
         sync: false
       - key: PORT
-        value: 10000
+        value: 8080
+    healthCheckPath: /health
