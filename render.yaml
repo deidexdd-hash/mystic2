@@ -1,15 +1,15 @@
+# render.yaml
 services:
   - type: web
-    name: numerology-telegram-bot
+    name: numerology-bot
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+    startCommand: python app.py
     envVars:
       - key: BOT_TOKEN
         sync: false
       - key: GROQ_API_KEY
         sync: false
-      - key: PORT
-        value: 8080
-    healthCheckPath: /health
+      - key: PYTHON_VERSION
+        value: 3.10
