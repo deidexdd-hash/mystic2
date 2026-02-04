@@ -3,14 +3,14 @@ services:
     name: numerology-bot
     env: python
     plan: free
-    runtime: python
-    pythonVersion: "3.11"      # <‑‑ задаём нужную версию
-    buildCommand: pip install -r requirements.txt
+    pythonVersion: "3.11"
+    buildCommand: pip install --no-cache-dir -r requirements.txt
     startCommand: python main.py
     port: 8080
     healthCheckPath: /health
     healthCheckTimeout: 30s
 
+    # Переменные окружения – задайте их через Render UI
     envVars:
       - key: BOT_TOKEN
         sync: true
@@ -20,7 +20,8 @@ services:
         sync: true
 
     autoDeploy: true
+
     cronJobs:
       - name: daily-cron
         schedule: "0 0 * * *"
-        command: echo "cron works!"
+        command: echo "cron works!"   # замените на ваш скрипт
