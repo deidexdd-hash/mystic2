@@ -3,14 +3,13 @@ services:
     name: numerology-bot
     env: python
     plan: free
-    pythonVersion: "3.11"
+    pythonVersion: "3.13.4"  # либо 3.13 (публикует Render, можно 3.13.4)
     buildCommand: pip install --no-cache-dir -r requirements.txt
     startCommand: python main.py
     port: 8080
     healthCheckPath: /health
     healthCheckTimeout: 30s
 
-    # Переменные окружения – задайте их через Render UI
     envVars:
       - key: BOT_TOKEN
         sync: true
@@ -23,5 +22,5 @@ services:
 
     cronJobs:
       - name: daily-cron
-        schedule: "0 0 * * *"
-        command: echo "cron works!"   # замените на ваш скрипт
+        schedule: "0 0 * * *"   # каждую полночь
+        command: echo "cron works!"
