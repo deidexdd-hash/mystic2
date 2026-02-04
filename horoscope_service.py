@@ -1,9 +1,6 @@
 # horoscope_service.py
-"""
-Сервис парсинга гороскопов (Mail.ru / Rambler) + генерации AI‑гороскопа через Groq.
-"""
-
 import asyncio
+import logging
 from datetime import datetime
 from typing import Dict
 
@@ -11,9 +8,14 @@ import aiohttp
 from bs4 import BeautifulSoup
 from config import Config
 
-# ----------------------------------------------------------------------
-#  Грациальная инициализация Groq
-# ----------------------------------------------------------------------
+# ────────────────────────────────────────
+#  ГЛУБОКИЙ ГЕНЕРАТОР И ОТКРЫТЫЙ ДЛЯ 3.13
+# ────────────────────────────────────────
+log = logging.getLogger(__name__)
+
+# ───────────────────────
+#  IMPORT «GROQ» (НЕобязательно)
+# ───────────────────────
 try:
     from groq import Groq
     GROQ_AVAILABLE = True
@@ -23,33 +25,31 @@ except Exception:
 
 class HoroscopeService:
     def __init__(self) -> None:
-        """Создаём клиент Groq, если ключ задан."""
-        self.groq_client: Groq | None = None
+        # «Гороскопы‑AI» → только если ключ задан
+        self.groq_client = None
         if GROQ_AVAILABLE and Config.GROQ_API_KEY:
             try:
                 self.groq_client = Groq(api_key=Config.GROQ_API_KEY)
-            except Exception:
-                # В случае неудачи не пробрасываем исключение – просто не будем генерировать AI‑ге
-                pass
+            except Exception as exc:
+                log.error(f"❌ Инициализация Groq не удалась: {exc}")
 
-    # ------------------------------------------------------------------
-    #  Асинхронный HTTP‑запрос
-    # ------------------------------------------------------------------
+    # ---------------------------------------------------
+    #  Асинхронный HTML‑запрос
+    # ---------------------------------------------------
     async def _fetch(self, url: str) -> str | None:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=10) as resp:
                     if resp.status == 200:
                         return await resp.text()
-        except Exception:          # любые network‑ошибки – просто None
-            return None
+        except Exception as exc:
+            log.debug(f"❌ {url} не удалось получить: {exc}")
         return None
 
-    # ------------------------------------------------------------------
-    #  Парсим гороскопы с внешних сайтов
-    # ------------------------------------------------------------------
+    # ---------------------------------------------------
+    #  Статический парсинг из внешних сайтов
+    # ---------------------------------------------------
     async def parse_horoscopes(self, zodiac_sign: str) -> str:
-        """Возвращает простую строку с гороскопами Mail.ru и Rambler."""
         zodiac_map = {
             "Овен": "aries",
             "Телец": "taurus",
@@ -68,18 +68,18 @@ class HoroscopeService:
         zodiac_en = zodiac_map.get(zodiac_sign, "aries")
         horoscopes: list[str] = []
 
-        # Mail.ru
+        # -- Mail.ru ----------------------------------------------------
         url_mail = f"https://horo.mail.ru/prediction/{zodiac_en}/today/"
         html = await self._fetch(url_mail)
         if html:
             soup = BeautifulSoup(html, "html.parser")
             elem = soup.find("div", class_="article__item")
             if elem:
-                txt = elem.get_text().strip()
-                if txt:
-                    horoscopes.append(f"📧 *Mail.ru*:\n{txt[:300]}...")
+                text = elem.get_text(strip=True)
+                if text:
+                    horoscopes.append(f"📧 *Mail.ru*:\n{text[:300]}...")
 
-        # Rambler
+        # -- Rambler ---------------------------------------------------
         url_rambler = f"https://horoscopes.rambler.ru/{zodiac_en}/"
         html = await self._fetch(url_rambler)
         if html:
@@ -87,23 +87,23 @@ class HoroscopeService:
             for cls in ["_1RrZR", "article__text", "content", "text"]:
                 elem = soup.find("p", class_=cls)
                 if elem:
-                    txt = elem.get_text().strip()
-                    if txt:
-                        horoscopes.append(f"🌐 *Rambler*:\n{txt[:300]}...")
+                    text = elem.get_text(strip=True)
+                    if text:
+                        horoscopes.append(f"🌐 *Rambler*:\n{text[:300]}...")
                         break
 
         return "\n\n".join(horoscopes) or "На сегодня гороскопы временно недоступны."
 
-    # ------------------------------------------------------------------
-    #  Генерация AI‑гороскопа через Groq
-    # ------------------------------------------------------------------
-    async def _generate_ai(self, user: dict, zodiac_sign: str) -> str:
+    # ---------------------------------------------------
+    #  GN‑Генерация персонального AI‑гороскопа (Groq)
+    # ---------------------------------------------------
+    async def _generate_ai(self, user: Dict, zodiac_sign: str) -> str:
         if not self.groq_client:
-            return "⚠️ Сервис AI‑гороскопа недоступен."
+            return "⚠️ Сервис генерации гороскопов недоступен."
 
         today = datetime.now().strftime("%d.%m.%Y")
         prompt = f"""
-Создай персональный гороскоп на {today}:
+Создай персональный гороскоп на {today} для человека со следующими данными:
 
 Дата рождения: {user.get('date', 'N/A')}
 Знак зодиака: {zodiac_sign}
@@ -116,13 +116,16 @@ class HoroscopeService:
 3. Финансы/карьера
 4. Здоровье
 5. Совет дня
-Стилизовано, добавляются эмодзи, длина < 800 символов.
-        """
+
+Стилизуйте, добавьте эмодзи, длина < 800 символов
+
+"""
+
         try:
             completion = self.groq_client.chat.completions.create(
                 model=Config.GROQ_MODEL,
                 messages=[
-                    {"role": "system", "content": "Ты астролог и нумеролог."},
+                    {"role": "system", "content": "Ты астролог и нумеролог. Твои прогнозы точные и мотивирующие."},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.7,
@@ -130,40 +133,54 @@ class HoroscopeService:
             )
             return completion.choices[0].message.content.strip()
         except Exception as exc:
-            return f"❌ Ошибка AI‑гороскопа: {exc}"
+            return f"❌ Ошибка генерации AI‑гороскопа: {exc}"
 
-    # ------------------------------------------------------------------
-    #  Весь дневной гороскоп (парс, AI, объединяем)
-    # ------------------------------------------------------------------
-    async def get_daily_horoscope(self, user_data: dict) -> str:
+    # ---------------------------------------------------
+    #  Полный «дневной» гороскоп (парсинг + AI + кеш)
+    # ---------------------------------------------------
+    async def get_daily_horoscope(self, user_data: Dict) -> str:
         zodiac = user_data.get("zodiac", "Овен")
-        static_text = await self.parse_horoscopes(zodiac)
+        cache_key = f"{zodiac}_{datetime.now():%Y-%m-%d}"
+
+        # Кеш – только в памяти, в продакшн можно вынести в memcached/redis
+        if hasattr(self, "_cache") and cache_key in self._cache:
+            return self._cache[cache_key]
+
+        parsed = await self.parse_horoscopes(zodiac)
 
         ai_text = ""
         if self.groq_client:
             ai_text = await self._generate_ai(user_data, zodiac)
 
         if ai_text and not ai_text.startswith("❌"):
-            return f"""✨ *ПЕРСОНАЛЬНЫЙ ГОРОСКОП* ✨
-📅 {datetime.now().strftime("%d.%m.%Y")}
+            res = f"""
+✨ *ПЕРСОНАЛЬНЫЙ ГОРОСКОП* ✨
+📅 {datetime.now():%d.%m.%Y}
 ♈ Знак зодиака: {zodiac}
 
 🌟 *Ваш персональный прогноз на сегодня* 🌟
+
 {ai_text}
 
 📊 *Сводка с других источников* 📊
-{static_text}
+
+{parsed}
 
 💫 *Совет от нумеролога* 💫
-Используйте число {user_data.get('second', '1')} как ваш талисман сегодня.
+Используйте число {user_data.get('second', '1')} как ваш талисман сегодня!
 """
         else:
-            return f"""✨ *ГОРОСКОП НА СЕГОДНЯ* ✨
-📅 {datetime.now().strftime("%d.%m.%Y")}
+            res = f"""
+✨ *ГОРОСКОП НА СЕГОДНЯ* ✨
+📅 {datetime.now():%d.%m.%Y}
 ♈ Знак зодиака: {zodiac}
 
-{static_text}
+{parsed}
 
 💫 *Совет дня* 💫
 Сегодня благоприятный день для новых начинаний! Используйте число {user_data.get('second', '1')} как ваш талисман.
 """
+
+        self._cache = getattr(self, "_cache", {})
+        self._cache[cache_key] = res
+        return res
