@@ -1,3 +1,4 @@
+# app.py (бывший main (4).py)
 import logging
 import asyncio
 import os
