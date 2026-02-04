@@ -6,11 +6,11 @@ from datetime import datetime
 from aiohttp import web
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    ConversationHandler,
+    ApplicationBuilder,
     CallbackContext,
+    CommandHandler,
+    ConversationHandler,
+    MessageHandler,
     filters,
 )
 
@@ -19,254 +19,243 @@ from matrix_calculator import MatrixCalculator
 from interpretations import Interpretations
 from horoscope_service import HoroscopeService
 
-# ------------------------------------------------------------------------
-#  1️⃣ LOGGING
-# ------------------------------------------------------------------------
+# ------------ LOGGING ------------
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
-# ------------------------------------------------------------------------
-#  2️⃣ Константы диалога
-# ------------------------------------------------------------------------
+# ------------ STATE -------------
 DATE, GENDER = range(2)
 
-# ------------------------------------------------------------------------
-#  3️⃣ Бот
-# ------------------------------------------------------------------------
+# ------------ BOT CLASS -------------
 class NumerologyBot:
     def __init__(self):
         self.matrix_calc = MatrixCalculator()
         self.interpretations = Interpretations()
         self.horoscope_service = HoroscopeService()
-        self.user_data_store = {}
+        self.data_store: dict[int, dict] = {}
 
-    # --- COMMAND HANDLERS --------------------------------------------------------------------
-    async def start(self, update: Update, context: CallbackContext) -> int:
+    # ---- /start -------------
+    async def start(self, update: Update, _: CallbackContext) -> int:
         await update.message.reply_text(
             "👋 Добро пожаловать в бот нумерологии!\n\n"
-            "Пожалуйста, введите вашу дату рождения в формате ДД.ММ.ГГГГ:\n"
-            "Например: 15.05.1990"
+            "Введите дату рождения в формате ДД.ММ.ГГГГ, например 15.05.1990"
         )
         return DATE
 
-    async def receive_date(self, update: Update, context: CallbackContext) -> int:
-        user_date = update.message.text
+    # ---- Дата -------------
+    async def receive_date(self, update: Update, ctx: CallbackContext) -> int:
+        date_text = update.message.text
         try:
-            datetime.strptime(user_date, "%d.%m.%Y")
-            context.user_data["birth_date"] = user_date
-            keyboard = [
-                [KeyboardButton("Мужской"), KeyboardButton("Женский")]
-            ]
-            reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
+            datetime.strptime(date_text, "%d.%m.%Y")
+            ctx.user_data["birth_date"] = date_text
+            kb = [[KeyboardButton("Мужской"), KeyboardButton("Женский")]]
             await update.message.reply_text(
-                "✅ Дата рождения принята!\n"
-                "Теперь выберите ваш пол:",
-                reply_markup=reply_markup,
+                "✅ Дата принята!\nВыберите ваш пол:",
+                reply_markup=ReplyKeyboardMarkup(kb, one_time_keyboard=True),
             )
             return GENDER
         except ValueError:
             await update.message.reply_text(
-                "❌ Неверный формат даты!\n"
-                "Пожалуйста, введите дату в формате ДД.ММ.ГГГГ\n"
-                "Например: 15.05.1990"
+                "❌ Неверный формат даты.\nВведите как ДД.ММ.ГГГГ, например 15.05.1990"
             )
             return DATE
 
-    async def receive_gender(self, update: Update, context: CallbackContext) -> int:
+    # ---- Пол -------------
+    async def receive_gender(self, update: Update, ctx: CallbackContext) -> int:
         gender = update.message.text
-        birth_date = context.user_data.get("birth_date")
-        if gender not in ["Мужской", "Женский"]:
+        birth_date = ctx.user_data.get("birth_date")
+        if gender not in ("Мужской", "Женский"):
             await update.message.reply_text(
-                "❌ Пожалуйста, выберите пол из предложенных вариантов"
+                "❌ Пожалуйста, выберите один из предложенных вариантов."
             )
             return GENDER
 
         user_id = update.effective_user.id
-        self.user_data_store[user_id] = {
+        matrix = self.matrix_calc.calculate_matrix(birth_date, gender)
+
+        self.data_store[user_id] = {
             "birth_date": birth_date,
             "gender": gender,
             "chat_id": update.effective_chat.id,
+            "matrix": matrix,
         }
 
-        matrix_data = self.matrix_calc.calculate_matrix(birth_date, gender)
-        self.user_data_store[user_id]["matrix"] = matrix_data
-
-        keyboard = [
+        kb = [
             [KeyboardButton("🔮 Полная матрица"), KeyboardButton("🌟 Гороскоп на сегодня")],
             [KeyboardButton("📊 Только матрица 3x3"), KeyboardButton("ℹ️ О боте")],
         ]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         await update.message.reply_text(
             f"✅ Отлично! Ваши данные сохранены:\n"
             f"📅 Дата: {birth_date}\n"
             f"⚧ Пол: {gender}\n"
-            f"♈ Знак зодиака: {matrix_data['zodiac']}\n\n"
-            f"Выберите действие:",
-            reply_markup=reply_markup,
+            f"♈ Знак: {matrix['zodiac']}\n\n"
+            "Выберите действие:",
+            reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True),
         )
         return ConversationHandler.END
 
-    # --- HELPERS TO SHOW HANDLERS --------------------------------------------------------------------
-    async def show_full_matrix(self, update: Update, context: CallbackContext):
-        user_id = update.effective_user.id
-        user_data = self.user_data_store.get(user_id)
-        if not user_data or "matrix" not in user_data:
-            await update.message.reply_text("❌ Сначала введите ваши данные через команду /start")
+    # ---- Show full matrix -------------
+    async def full_matrix(self, update: Update, _: CallbackContext):
+        uid = update.effective_user.id
+        user = self.data_store.get(uid)
+        if not user:
+            await update.message.reply_text("❌ Сначала заполните данные /start")
             return
 
-        matrix_data = user_data["matrix"]
-        matrix_display = self.matrix_calc.format_matrix_display(matrix_data)
+        matrix_display = self.matrix_calc.format_matrix_display(user["matrix"])
         await update.message.reply_text(
-            f"📊 *Ваша нумерологическая матрица:*\n\n{matrix_display}",
+            f"📊 *Нумерологическая матрица:*\n\n{matrix_display}",
             parse_mode="Markdown",
         )
         try:
-            interpretation = self.interpretations.generate_full_interpretation(matrix_data)
-            max_len = 4096  # telegram ограничивает 4096 символов
-            for i in range(0, len(interpretation), max_len):
-                part = interpretation[i : i + max_len]
-                await update.message.reply_text(part, parse_mode="Markdown")
-        except Exception as exc:
-            logger.error(f"Ошибка генерации интерпретации: {exc}")
+            interp = self.interpretations.generate_full_interpretation(user["matrix"])
+            for i in range(0, len(interp), 4096):
+                await update.message.reply_text(interp[i:i+4096], parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Error generating interpretation: {e}")
             await update.message.reply_text("⚠️ Интерпретации временно недоступны.")
-        await self.show_main_keyboard(update, context)
+        await self.show_main_keyboard(update, None)
 
-    async def show_daily_horoscope(self, update: Update, context: CallbackContext):
-        user_id = update.effective_user.id
-        user_data = self.user_data_store.get(user_id)
-        if not user_data or "matrix" not in user_data:
-            await update.message.reply_text("❌ Сначала введите ваши данные через команду /start")
+    # ---- Show daily horoscope -------------
+    async def daily_horoscope(self, update: Update, _: CallbackContext):
+        uid = update.effective_user.id
+        user = self.data_store.get(uid)
+        if not user:
+            await update.message.reply_text("❌ Сначала заполните данные /start")
             return
-        processing_msg = await update.message.reply_text("🔮 Генерирую ваш персональный гороскоп...")
+
+        proc_msg = await update.message.reply_text("🔮 Генерирую персональный гороскоп…")
         try:
-            horoscope = await self.horoscope_service.get_daily_horoscope(user_data["matrix"])
-            await processing_msg.delete()
-            max_len = 4096
-            for i in range(0, len(horoscope), max_len):
-                part = horoscope[i : i + max_len]
-                await update.message.reply_text(part, parse_mode="Markdown")
-        except Exception as exc:
-            await processing_msg.delete()
-            logger.error(f"Ошибка получения гороскопа: {exc}")
-            await update.message.reply_text("❌ Ошибка при получении гороскопа. Попробуйте позже.")
-        await self.show_main_keyboard(update, context)
+            horo = await self.horoscope_service.get_daily_horoscope(user["matrix"])
+            await proc_msg.delete()
+            for i in range(0, len(horo), 4096):
+                await update.message.reply_text(horo[i:i+4096], parse_mode="Markdown")
+        except Exception as e:
+            await proc_msg.delete()
+            logger.error(f"Error getting horoscope: {e}")
+            await update.message.reply_text("❌ Ошибка получения гороскопа. Попробуйте позже.")
+        await self.show_main_keyboard(update, None)
 
-    async def show_matrix_only(self, update: Update, context: CallbackContext):
-        user_id = update.effective_user.id
-        user_data = self.user_data_store.get(user_id)
-        if not user_data or "matrix" not in user_data:
-            await update.message.reply_text("❌ Сначала введите ваши данные через команду /start")
+    # ---- Show only matrix -------------
+    async def only_matrix(self, update: Update, _: CallbackContext):
+        uid = update.effective_user.id
+        user = self.data_store.get(uid)
+        if not user:
+            await update.message.reply_text("❌ Сначала заполните данные /start")
             return
-        matrix_data = user_data["matrix"]
-        matrix_display = self.matrix_calc.format_matrix_display(matrix_data)
-        additional_numbers = ".".join(map(str, matrix_data["additional"]))
+
+        matrix_disp = self.matrix_calc.format_matrix_display(user["matrix"])
+        add_nums = ".".join(map(str, user["matrix"]["additional"]))
         response = f"""
 📊 *ВАША МАТРИЦА* 📊
 
-*Дата рождения:* {matrix_data['date']}
-*Знак зодиака:* {matrix_data['zodiac']}
-*Доп. числа:* {additional_numbers}
+*Дата:* {user['matrix']['date']}
+*Знак:* {user['matrix']['zodiac']}
+*Доп. числа:* {add_nums}
 
-{matrix_display}
+{matrix_disp}
 
 *Расшифровка:*
-1️⃣: {len([x for x in matrix_data['full_array'] if x == 1])} шт.
-2️⃣: {len([x for x in matrix_data['full_array'] if x == 2])} шт.
-3️⃣: {len([x for x in matrix_data['full_array'] if x == 3])} шт.
-4️⃣: {len([x for x in matrix_data['full_array'] if x == 4])} шт.
-5️⃣: {len([x for x in matrix_data['full_array'] if x == 5])} шт.
-6️⃣: {len([x for x in matrix_data['full_array'] if x == 6])} шт.
-7️⃣: {len([x for x in matrix_data['full_array'] if x == 7])} шт.
-8️⃣: {len([x for x in matrix_data['full_array'] if x == 8])} шт.
-9️⃣: {len([x for x in matrix_data['full_array'] if x == 9])} шт.
-        """
+1️⃣: {len([x for x in user["matrix"]["full_array"] if x == 1])} шт.
+2️⃣: {len([x for x in user["matrix"]["full_array"] if x == 2])} шт.
+3️⃣: {len([x for x in user["matrix"]["full_array"] if x == 3])} шт.
+4️⃣: {len([x for x in user["matrix"]["full_array"] if x == 4])} шт.
+5️⃣: {len([x for x in user["matrix"]["full_array"] if x == 5])} шт.
+6️⃣: {len([x for x in user["matrix"]["full_array"] if x == 6])} шт.
+7️⃣: {len([x for x in user["matrix"]["full_array"] if x == 7])} шт.
+8️⃣: {len([x for x in user["matrix"]["full_array"] if x == 8])} шт.
+9️⃣: {len([x for x in user["matrix"]["full_array"] if x == 9])} шт.
+"""
         await update.message.reply_text(response, parse_mode="Markdown")
-        await self.show_main_keyboard(update, context)
+        await self.show_main_keyboard(update, None)
 
-    async def show_about(self, update: Update, context: CallbackContext):
+    # ---- Show about -------------
+    async def about(self, update: Update, _: CallbackContext):
         about_text = """
 🤖 *НУМЕРОЛОГИЧЕСКИЙ БОТ* 🤖
 
-Этот бот рассчитывает вашу персональную нумерологическую матрицу...
-
-*Функции:*
-🔮 Полная матрица - подробный расчёт с интерпретациями
-🌟 Гороскоп на сегодня - персональный прогноз с AI
-📊 Матрица 3x3 - только визуализация матрицы
+Этот бот рассчитывает вашу персональную нумерологическую матрицу и гороскопы.
 
 *Технологии:*
-• Python + python-telegram-bot
-• Groq AI для гороскопов
-• BeautifulSoup для парсинга
+• Python + python‑telegram‑bot v21
+• Groq AI (необязательно)
+• BeautifulSoup
 
-Для начала работы нажмите /start
-        """
+Нажмите /start и следуйте инструкциям.""",
         await update.message.reply_text(about_text, parse_mode="Markdown")
-        await self.show_main_keyboard(update, context)
+        await self.show_main_keyboard(update, None)
 
-    async def show_main_keyboard(self, update: Update, context: CallbackContext):
-        keyboard = [
+    # ---- Helper: show main keyboard -------------
+    async def show_main_keyboard(self, update: Update, _: CallbackContext):
+        kb = [
             [KeyboardButton("🔮 Полная матрица"), KeyboardButton("🌟 Гороскоп на сегодня")],
             [KeyboardButton("📊 Только матрица 3x3"), KeyboardButton("ℹ️ О боте")],
         ]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        await update.message.reply_text("Выберите действие:", reply_markup=reply_markup)
+        await update.message.reply_text("Выберите действие:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
-    async def handle_message(self, update: Update, context: CallbackContext):
+    # ---- Generic message handler -------------
+    async def handle_text(self, update: Update, ctx: CallbackContext):
         txt = update.message.text
         if txt == "🔮 Полная матрица":
-            await self.show_full_matrix(update, context)
+            await self.full_matrix(update, ctx)
         elif txt == "🌟 Гороскоп на сегодня":
-            await self.show_daily_horoscope(update, context)
+            await self.daily_horoscope(update, ctx)
         elif txt == "📊 Только матрица 3x3":
-            await self.show_matrix_only(update, context)
+            await self.only_matrix(update, ctx)
         elif txt == "ℹ️ О боте":
-            await self.show_about(update, context)
+            await self.about(update, ctx)
         else:
             await update.message.reply_text("Используйте кнопки или /start")
 
-    async def error_handler(self, update: Update, context: CallbackContext):
-        logger.error(f"Ошибка: {context.error}")
+    # ---- Error handler -------------
+    async def error_handler(self, update: Update, ctx: CallbackContext):
+        logger.error(f"Ошибка: {ctx.error}")
         try:
             await update.message.reply_text("❌ Произошла ошибка. Пожалуйста, попробуйте снова.")
-        except:
+        except Exception:
             pass
 
 
-# ------------------------------------------------------------------------
-#  4️⃣ RUNNER – Запускаем bot и health‑check
-# ------------------------------------------------------------------------
-async def start_bot():
+# -------------------------------------------------------------
+#  Main запуска – параллельный Polling + Health‑check
+# -------------------------------------------------------------
+async def health_app():
+    """Возвращает aiohttp‑сервер с /health."""
+    app = web.Application()
+    app.router.add_get("/", lambda _: web.Response(text="Bot is running"))
+    app.router.add_get("/health", lambda _: web.Response(text="Bot is running"))
+    await web._run_app(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
+
+async def main() -> None:
     bot = NumerologyBot()
-    application = Application.builder().token(Config.BOT_TOKEN).build()
+
+    # Создаём Application
+    application = ApplicationBuilder().token(Config.BOT_TOKEN).build()
+
+    # Конверс. & прочие обработчики
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", bot.start)],
-        states={DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.receive_date)],
-                GENDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.receive_gender)]},
+        states={
+            DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.receive_date)],
+            GENDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.receive_gender)],
+        },
         fallbacks=[CommandHandler("start", bot.start)],
     )
-
     application.add_handler(conv_handler)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_text))
     application.add_error_handler(bot.error_handler)
 
-    # запускаем bot в фоне
-    await application.start()
-    await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    # Запускаем polling и health‑check параллельно
+    await asyncio.gather(
+        application.run_polling(allowed_updates=Update.ALL_TYPES),
+        health_app(),
+        return_exceptions=True
+    )
 
-async def health_app():
-    """Health‑check сервис в aiohttp"""
-    web_app = web.Application()
-    web_app.router.add_get("/", lambda _: web.Response(text="Bot is running"))
-    web_app.router.add_get("/health", lambda _: web.Response(text="Bot is running"))
-    await web._run_app(web_app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
-
-async def main():
-    # параллельно запускаем bot и HTTP‑сервер
-    await asyncio.gather(start_bot(), health_app())
 
 if __name__ == "__main__":
     asyncio.run(main())
