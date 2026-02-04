@@ -252,4 +252,53 @@ def build_application() -> Application:
         entry_points=[CommandHandler("start", bot.start)],
         states={
             DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.receive_date)],
-            G
+            GENDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.receive_gender)],
+        },
+        fallbacks=[CommandHandler("start", bot.start)],
+    )
+    app.add_handler(conv)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_text))
+    app.add_error_handler(bot.error_handler)
+    return app
+
+
+# --------------------------------------------------------------------
+# 5️⃣ MAIN - webhook + health-check
+# --------------------------------------------------------------------
+async def main() -> None:
+    # 1️⃣ Создаём Application и инициализируем её
+    app = build_application()
+    await app.initialize()
+
+    # 2️⃣ aiohttp-приложение для health-check
+    web_app = web.Application()
+    web_app.router.add_get("/", lambda _: web.Response(text="Bot is running"))
+    web_app.router.add_get("/health", lambda _: web.Response(text="Bot is running"))
+
+    # 3️⃣ Формируем URL webhook'а
+    external_host = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+    if not external_host:
+        raise RuntimeError(
+            "RENDER_EXTERNAL_HOSTNAME is not set - необходимо для формирования webhook URL"
+        )
+    webhook_url = f"https://{external_host}/webhook"
+
+    # 4️⃣ Запускаем webhook-сервер через run_webhook
+    async with app:
+        await app.run_webhook(
+            listen="0.0.0.0",
+            port=int(os.getenv("PORT", 8080)),
+            url_path="/webhook",
+            webhook_url=webhook_url,
+            allowed_updates=None,
+        )
+        # Держим процесс живым
+        while True:
+            await asyncio.sleep(3600)
+
+
+# --------------------------------------------------------------------
+# 6️⃣ ТОЧКА ВХОДА
+# --------------------------------------------------------------------
+if __name__ == "__main__":
+    asyncio.run(main())
