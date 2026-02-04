@@ -1,15 +1,22 @@
-# render.yaml
 services:
   - type: web
     name: numerology-bot
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: python app.py
+    buildCommand: pip install --no-cache-dir -r requirements.txt
+    startCommand: python main.py
+    port: 8080
+    healthCheckPath: /health
+    healthCheckTimeout: 30s
     envVars:
       - key: BOT_TOKEN
-        sync: false
+        sync: true
       - key: GROQ_API_KEY
-        sync: false
-      - key: PYTHON_VERSION
-        value: 3.10
+        sync: true
+      - key: GROQ_MODEL
+        sync: true
+    autoDeploy: true
+    cronJobs:
+      - name: daily-cron
+        schedule: "0 0 * * *"  # каждый день в полночь
+        command: echo "Cron works!"
