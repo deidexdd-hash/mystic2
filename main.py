@@ -1,7 +1,8 @@
-import logging
 import asyncio
+import logging
 import os
 from datetime import datetime
+
 from aiohttp import web
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
@@ -12,22 +13,29 @@ from telegram.ext import (
     CallbackContext,
     filters,
 )
+
 from config import Config
 from matrix_calculator import MatrixCalculator
 from interpretations import Interpretations
 from horoscope_service import HoroscopeService
 
-# ===== Logging =====
+# ------------------------------------------------------------------------
+#  1️⃣ LOGGING
+# ------------------------------------------------------------------------
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
-# ===== Conversation states =====
+# ------------------------------------------------------------------------
+#  2️⃣ Константы диалога
+# ------------------------------------------------------------------------
 DATE, GENDER = range(2)
 
-# ===== Bot class =====
+# ------------------------------------------------------------------------
+#  3️⃣ Бот
+# ------------------------------------------------------------------------
 class NumerologyBot:
     def __init__(self):
         self.matrix_calc = MatrixCalculator()
@@ -35,6 +43,7 @@ class NumerologyBot:
         self.horoscope_service = HoroscopeService()
         self.user_data_store = {}
 
+    # --- COMMAND HANDLERS --------------------------------------------------------------------
     async def start(self, update: Update, context: CallbackContext) -> int:
         await update.message.reply_text(
             "👋 Добро пожаловать в бот нумерологии!\n\n"
@@ -48,7 +57,9 @@ class NumerologyBot:
         try:
             datetime.strptime(user_date, "%d.%m.%Y")
             context.user_data["birth_date"] = user_date
-            keyboard = [[KeyboardButton("Мужской"), KeyboardButton("Женский")]]
+            keyboard = [
+                [KeyboardButton("Мужской"), KeyboardButton("Женский")]
+            ]
             reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
             await update.message.reply_text(
                 "✅ Дата рождения принята!\n"
@@ -72,14 +83,17 @@ class NumerologyBot:
                 "❌ Пожалуйста, выберите пол из предложенных вариантов"
             )
             return GENDER
+
         user_id = update.effective_user.id
         self.user_data_store[user_id] = {
             "birth_date": birth_date,
             "gender": gender,
             "chat_id": update.effective_chat.id,
         }
+
         matrix_data = self.matrix_calc.calculate_matrix(birth_date, gender)
         self.user_data_store[user_id]["matrix"] = matrix_data
+
         keyboard = [
             [KeyboardButton("🔮 Полная матрица"), KeyboardButton("🌟 Гороскоп на сегодня")],
             [KeyboardButton("📊 Только матрица 3x3"), KeyboardButton("ℹ️ О боте")],
@@ -95,12 +109,14 @@ class NumerologyBot:
         )
         return ConversationHandler.END
 
+    # --- HELPERS TO SHOW HANDLERS --------------------------------------------------------------------
     async def show_full_matrix(self, update: Update, context: CallbackContext):
         user_id = update.effective_user.id
         user_data = self.user_data_store.get(user_id)
         if not user_data or "matrix" not in user_data:
             await update.message.reply_text("❌ Сначала введите ваши данные через команду /start")
             return
+
         matrix_data = user_data["matrix"]
         matrix_display = self.matrix_calc.format_matrix_display(matrix_data)
         await update.message.reply_text(
@@ -109,12 +125,12 @@ class NumerologyBot:
         )
         try:
             interpretation = self.interpretations.generate_full_interpretation(matrix_data)
-            max_len = 4000
+            max_len = 4096  # telegram ограничивает 4096 символов
             for i in range(0, len(interpretation), max_len):
                 part = interpretation[i : i + max_len]
                 await update.message.reply_text(part, parse_mode="Markdown")
-        except Exception as e:
-            logger.error(f"Ошибка генерации интерпретации: {e}")
+        except Exception as exc:
+            logger.error(f"Ошибка генерации интерпретации: {exc}")
             await update.message.reply_text("⚠️ Интерпретации временно недоступны.")
         await self.show_main_keyboard(update, context)
 
@@ -126,17 +142,15 @@ class NumerologyBot:
             return
         processing_msg = await update.message.reply_text("🔮 Генерирую ваш персональный гороскоп...")
         try:
-            horoscope = await self.horoscope_service.get_daily_horoscope(
-                user_data["matrix"]
-            )
+            horoscope = await self.horoscope_service.get_daily_horoscope(user_data["matrix"])
             await processing_msg.delete()
-            max_len = 4000
+            max_len = 4096
             for i in range(0, len(horoscope), max_len):
                 part = horoscope[i : i + max_len]
                 await update.message.reply_text(part, parse_mode="Markdown")
-        except Exception as e:
+        except Exception as exc:
             await processing_msg.delete()
-            logger.error(f"Ошибка получения гороскопа: {e}")
+            logger.error(f"Ошибка получения гороскопа: {exc}")
             await update.message.reply_text("❌ Ошибка при получении гороскопа. Попробуйте позже.")
         await self.show_main_keyboard(update, context)
 
@@ -176,17 +190,17 @@ class NumerologyBot:
         about_text = """
 🤖 *НУМЕРОЛОГИЧЕСКИЙ БОТ* 🤖
 
-Этот бот рассчитывает вашу персональную нумерологическую матрицу на основе даты рождения.
+Этот бот рассчитывает вашу персональную нумерологическую матрицу...
 
 *Функции:*
 🔮 Полная матрица - подробный расчёт с интерпретациями
 🌟 Гороскоп на сегодня - персональный прогноз с AI
-📊 Матрица 3x3 - только визуальный вывод
+📊 Матрица 3x3 - только визуализация матрицы
 
 *Технологии:*
-• Python + python‑telegram‑bot
-• Groq AI для генерации гороскопов
-• Парсинг астрологических сайтов
+• Python + python-telegram-bot
+• Groq AI для гороскопов
+• BeautifulSoup для парсинга
 
 Для начала работы нажмите /start
         """
@@ -202,44 +216,36 @@ class NumerologyBot:
         await update.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
     async def handle_message(self, update: Update, context: CallbackContext):
-        text = update.message.text
-        if text == "🔮 Полная матрица":
+        txt = update.message.text
+        if txt == "🔮 Полная матрица":
             await self.show_full_matrix(update, context)
-        elif text == "🌟 Гороскоп на сегодня":
+        elif txt == "🌟 Гороскоп на сегодня":
             await self.show_daily_horoscope(update, context)
-        elif text == "📊 Только матрица 3x3":
+        elif txt == "📊 Только матрица 3x3":
             await self.show_matrix_only(update, context)
-        elif text == "ℹ️ О боте":
+        elif txt == "ℹ️ О боте":
             await self.show_about(update, context)
         else:
-            await update.message.reply_text("Используйте кнопки для навигации или /start для начала")
+            await update.message.reply_text("Используйте кнопки или /start")
 
     async def error_handler(self, update: Update, context: CallbackContext):
         logger.error(f"Ошибка: {context.error}")
         try:
-            await update.message.reply_text(
-                "❌ Произошла ошибка. Пожалуйста, попробуйте снова."
-            )
+            await update.message.reply_text("❌ Произошла ошибка. Пожалуйста, попробуйте снова.")
         except:
             pass
 
 
-# ===== Main =====
-async def main():
-    # Проверяем токен – без него бот не стартует
-    if not Config.BOT_TOKEN:
-        logger.error("❌ Была не задана переменная BOT_TOKEN!")
-        return
-
+# ------------------------------------------------------------------------
+#  4️⃣ RUNNER – Запускаем bot и health‑check
+# ------------------------------------------------------------------------
+async def start_bot():
     bot = NumerologyBot()
     application = Application.builder().token(Config.BOT_TOKEN).build()
-
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", bot.start)],
-        states={
-            DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.receive_date)],
-            GENDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.receive_gender)],
-        },
+        states={DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.receive_date)],
+                GENDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot.receive_gender)]},
         fallbacks=[CommandHandler("start", bot.start)],
     )
 
@@ -247,23 +253,20 @@ async def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
     application.add_error_handler(bot.error_handler)
 
-    # ===== Health‑check web server =====
+    # запускаем bot в фоне
+    await application.start()
+    await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+
+async def health_app():
+    """Health‑check сервис в aiohttp"""
     web_app = web.Application()
     web_app.router.add_get("/", lambda _: web.Response(text="Bot is running"))
     web_app.router.add_get("/health", lambda _: web.Response(text="Bot is running"))
-    host = "0.0.0.0"
-    port = int(os.environ.get("PORT", 8080))
+    await web._run_app(web_app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
 
-    # Run bot and web server concurrently
-    await asyncio.gather(
-        application.run_polling(
-            allowed_updates=Update.ALL_TYPES,
-            check_interval=1.0,
-            drop_pending_updates=True,
-        ),
-        web._run_app(web_app, host=host, port=port),
-    )
-
+async def main():
+    # параллельно запускаем bot и HTTP‑сервер
+    await asyncio.gather(start_bot(), health_app())
 
 if __name__ == "__main__":
     asyncio.run(main())
