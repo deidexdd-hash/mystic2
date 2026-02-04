@@ -20,23 +20,17 @@ from matrix_calculator import MatrixCalculator
 from interpretations import Interpretations
 from horoscope_service import HoroscopeService
 
-# ------------------------------------------------------------------
-#  LOGGING
-# ------------------------------------------------------------------
+# ----------------------------------- LOGGING ------------------------------------
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
-# ------------------------------------------------------------------
-#  ЛОКАЛЬНЫЕ СОСТОЯНИЯ ДИАЛОГА
-# ------------------------------------------------------------------
+# ---------------------------------- STATE ------------------------------------
 DATE, GENDER = range(2)
 
-# ------------------------------------------------------------------
-#  КЛАСС БОТА
-# ------------------------------------------------------------------
+# ---------------------------------- BOT CLASS --------------------------------
 class NumerologyBot:
     def __init__(self):
         self.matrix_calc = MatrixCalculator()
@@ -44,7 +38,7 @@ class NumerologyBot:
         self.horoscope_service = HoroscopeService()
         self.data_store: dict[int, dict] = {}
 
-    # ─────────────────────────── COMMANDS ──────────────────────────────
+    # ---------- COMMAND HANDLERS ----------
     async def start(self, update: Update, ctx: CallbackContext) -> int:
         await update.message.reply_text(
             "👋 Добро пожаловать в бот нумерологии!\n\n"
@@ -73,7 +67,9 @@ class NumerologyBot:
         gender = update.message.text
         birth_date = ctx.user_data.get("birth_date")
         if gender not in ("Мужской", "Женский"):
-            await update.message.reply_text("❌ Пожалуйста, выберите пол из предложенных вариантов.")
+            await update.message.reply_text(
+                "❌ Пожалуйста, выберите пол из предложенных вариантов."
+            )
             return GENDER
 
         uid = update.effective_user.id
@@ -87,7 +83,10 @@ class NumerologyBot:
         }
 
         kb = [
-            [KeyboardButton("🔮 Полная матрица"), KeyboardButton("🌟 Гороскоп на сегодня")],
+            [
+                KeyboardButton("🔮 Полная матрица"),
+                KeyboardButton("🌟 Гороскоп на сегодня"),
+            ],
             [KeyboardButton("📊 Только матрица 3x3"), KeyboardButton("ℹ️ О боте")],
         ]
         await update.message.reply_text(
@@ -100,7 +99,7 @@ class NumerologyBot:
         )
         return ConversationHandler.END
 
-    # ─────────────────────────── HELPERS ───────────────────────────────
+    # ---------- HELPERS ----------
     async def full_matrix(self, update: Update, _: CallbackContext):
         uid = update.effective_user.id
         user = self.data_store.get(uid)
@@ -116,7 +115,7 @@ class NumerologyBot:
         try:
             interp = self.interpretations.generate_full_interpretation(user["matrix"])
             for i in range(0, len(interp), 4096):
-                await update.message.reply_text(interp[i:i + 4096], parse_mode="Markdown")
+                await update.message.reply_text(interp[i : i + 4096], parse_mode="Markdown")
         except Exception as exc:
             logger.error(f"Error generating interpretation: {exc}")
             await update.message.reply_text("⚠️ Интерпретации временно недоступны.")
@@ -134,7 +133,7 @@ class NumerologyBot:
             horo = await self.horoscope_service.get_daily_horoscope(user["matrix"])
             await proc_msg.delete()
             for i in range(0, len(horo), 4096):
-                await update.message.reply_text(horo[i:i + 4096], parse_mode="Markdown")
+                await update.message.reply_text(horo[i : i + 4096], parse_mode="Markdown")
         except Exception as exc:
             await proc_msg.delete()
             logger.error(f"Error getting horoscope: {exc}")
@@ -160,15 +159,15 @@ class NumerologyBot:
 {self.matrix_calc.format_matrix_display(mat)}
 
 *Расшифровка:*
-1️⃣: {len([x for x in mat["full_array"] if x == 1])} шт.
-2️⃣: {len([x for x in mat["full_array"] if x == 2])} шт.
-3️⃣: {len([x for x in mat["full_array"] if x == 3])} шт.
-4️⃣: {len([x for x in mat["full_array"] if x == 4])} шт.
-5️⃣: {len([x for x in mat["full_array"] if x == 5])} шт.
-6️⃣: {len([x for x in mat["full_array"] if x == 6])} шт.
-7️⃣: {len([x for x in mat["full_array"] if x == 7])} шт.
-8️⃣: {len([x for x in mat["full_array"] if x == 8])} шт.
-9️⃣: {len([x for x in mat["full_array"] if x == 9])} шт.
+1️⃣: {len([x for x in mat['full_array'] if x == 1])} шт.
+2️⃣: {len([x for x in mat['full_array'] if x == 2])} шт.
+3️⃣: {len([x for x in mat['full_array'] if x == 3])} шт.
+4️⃣: {len([x for x in mat['full_array'] if x == 4])} шт.
+5️⃣: {len([x for x in mat['full_array'] if x == 5])} шт.
+6️⃣: {len([x for x in mat['full_array'] if x == 6])} шт.
+7️⃣: {len([x for x in mat['full_array'] if x == 7])} шт.
+8️⃣: {len([x for x in mat['full_array'] if x == 8])} шт.
+9️⃣: {len([x for x in mat['full_array'] if x == 9])} шт.
 """
         await update.message.reply_text(response, parse_mode="Markdown")
         await self.show_main_keyboard(update, None)
@@ -190,10 +189,15 @@ class NumerologyBot:
 
     async def show_main_keyboard(self, update: Update, _: CallbackContext):
         kb = [
-            [KeyboardButton("🔮 Полная матрица"), KeyboardButton("🌟 Гороскоп на сегодня")],
+            [
+                KeyboardButton("🔮 Полная матрица"),
+                KeyboardButton("🌟 Гороскоп на сегодня"),
+            ],
             [KeyboardButton("📊 Только матрица 3x3"), KeyboardButton("ℹ️ О боте")],
         ]
-        await update.message.reply_text("Выберите действие:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+        await update.message.reply_text(
+            "Выберите действие:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
+        )
 
     async def handle_text(self, update: Update, _: CallbackContext):
         txt = update.message.text
@@ -216,9 +220,7 @@ class NumerologyBot:
             pass
 
 
-# ------------------------------------------------------------------
-#  ФУНКЦИЯ ПОСТРОЕНИЕ APPLICATION (СИНХРОННО)
-# ------------------------------------------------------------------
+# ----------------------------------- APP BUILD -----------------------------------
 def build_application() -> Application:
     app = Application.builder().token(Config.BOT_TOKEN).build()
     bot = NumerologyBot()
@@ -234,23 +236,21 @@ def build_application() -> Application:
     app.add_handler(conv_handler)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_text))
     app.add_error_handler(bot.error_handler)
-
     return app
 
 
-# ------------------------------------------------------------------
-#  BOT В ИЗОБРАЖЕНИИ (thread)
-# ------------------------------------------------------------------
+# ----------------------------------- BOT IN SEPARATE THREAD -----------------------------------
 def run_bot_in_thread() -> None:
-    """Запускает бота в отдельном потоке."""
-    app = build_application()
-    # run_polling блокирует поток, поэтому ничего не делаем после этого
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    async def bot_coro():
+        app = build_application()
+        await app.initialize()
+        await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+
+    # asyncio.run() создаёт свой loop и задействует его в этом потоке
+    asyncio.run(bot_coro())
 
 
-# ------------------------------------------------------------------
-#  HEALTH‑CHECK через aiohttp
-# ------------------------------------------------------------------
+# ----------------------------------- HEALTH‑CHECK -----------------------------------
 async def health_app() -> None:
     web_app = web.Application()
     web_app.router.add_get("/", lambda _: web.Response(text="Bot is running"))
@@ -258,13 +258,13 @@ async def health_app() -> None:
     await web._run_app(web_app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
 
 
-# ------------------------------------------------------------------
-#  ENTRYPOINT
-# ------------------------------------------------------------------
+# ----------------------------------- MAIN ENTRY -----------------------------------
 def main() -> None:
-    # 1️⃣ Бот в отдельном потоке
-    threading.Thread(target=run_bot_in_thread, daemon=True).start()
-    # 2️⃣ Сервер health‑check в основном потоке
+    # 1️⃣ Запускаем бота в отдельном потоке
+    t = threading.Thread(target=run_bot_in_thread, daemon=True)
+    t.start()
+
+    # 2️⃣ После запуска бота стартуем только health‑check в основной нити
     asyncio.run(health_app())
 
 
