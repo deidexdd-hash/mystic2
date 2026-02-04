@@ -3,9 +3,9 @@ services:
     name: numerology-bot
     env: python
     plan: free
-    pythonVersion: "3.13.4"  # либо 3.13 (публикует Render, можно 3.13.4)
+    pythonVersion: "3.11"      # 3.13.4 не подходит, используем 3.11
     buildCommand: pip install --no-cache-dir -r requirements.txt
-    startCommand: python main.py
+    startCommand: python src/main.py   # <-- путь к вашему скрипту
     port: 8080
     healthCheckPath: /health
     healthCheckTimeout: 30s
@@ -22,5 +22,5 @@ services:
 
     cronJobs:
       - name: daily-cron
-        schedule: "0 0 * * *"   # каждую полночь
+        schedule: "0 0 * * *"
         command: echo "cron works!"
