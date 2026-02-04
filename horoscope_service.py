@@ -1,14 +1,40 @@
 import aiohttp
 import asyncio
 from datetime import datetime
-from groq import Groq
 from config import Config
 import requests
 from bs4 import BeautifulSoup
 
+# Добавляем условный импорт для работы с разными версиями groq
+try:
+    # Для версии 0.3.0 и выше
+    from groq import Groq
+    GROQ_AVAILABLE = True
+except ImportError as e:
+    try:
+        # Альтернативный импорт
+        import groq
+        if hasattr(groq, 'Groq'):
+            Groq = groq.Groq
+            GROQ_AVAILABLE = True
+        elif hasattr(groq, 'Client'):
+            # Используем Client вместо Groq
+            Groq = lambda **kwargs: groq.Client(**kwargs)
+            GROQ_AVAILABLE = True
+        else:
+            GROQ_AVAILABLE = False
+    except:
+        GROQ_AVAILABLE = False
+
 class HoroscopeService:
     def __init__(self):
-        self.groq_client = Groq(api_key=Config.GROQ_API_KEY)
+        self.groq_client = None
+        if GROQ_AVAILABLE and Config.GROQ_API_KEY:
+            try:
+                self.groq_client = Groq(api_key=Config.GROQ_API_KEY)
+            except Exception as e:
+                print(f"Ошибка инициализации Groq клиента: {e}")
+                self.groq_client = None
         self.cache = {}
     
     async def parse_horoscopes(self, zodiac_sign: str) -> str:
@@ -34,26 +60,39 @@ class HoroscopeService:
                         soup = BeautifulSoup(await response.text(), 'html.parser')
                         text_elem = soup.find('div', class_='article__item')
                         if text_elem:
-                            horoscopes.append(f"📧 *Mail.ru*:\n{text_elem.get_text()[:300]}...")
-            except:
-                pass
+                            text = text_elem.get_text().strip()
+                            if text:
+                                horoscopes.append(f"📧 *Mail.ru*:\n{text[:300]}...")
+            except Exception as e:
+                print(f"Ошибка парсинга Mail.ru: {e}")
             
             # Парсинг с Rambler
             try:
                 url = f"https://horoscopes.rambler.ru/{zodiac_en}/"
-                async with session.get(url, timeout=10) as response:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+                async with session.get(url, headers=headers, timeout=10) as response:
                     if response.status == 200:
                         soup = BeautifulSoup(await response.text(), 'html.parser')
-                        text_elem = soup.find('p', class_='_1RrZR')
-                        if text_elem:
-                            horoscopes.append(f"🌐 *Rambler*:\n{text_elem.get_text()[:300]}...")
-            except:
-                pass
+                        # Ищем разные возможные классы
+                        for class_name in ['_1RrZR', 'article__text', 'content', 'text']:
+                            text_elem = soup.find('p', class_=class_name)
+                            if text_elem:
+                                text = text_elem.get_text().strip()
+                                if text:
+                                    horoscopes.append(f"🌐 *Rambler*:\n{text[:300]}...")
+                                    break
+            except Exception as e:
+                print(f"Ошибка парсинга Rambler: {e}")
         
-        return "\n\n".join(horoscopes) if horoscopes else ""
+        return "\n\n".join(horoscopes) if horoscopes else "На сегодня гороскопы временно недоступны."
     
     async def generate_ai_horoscope(self, user_data: dict, zodiac_sign: str) -> str:
         """Генерация гороскопа через Groq AI"""
+        if not self.groq_client:
+            return "⚠️ Сервис генерации гороскопов временно недоступен."
+        
         today = datetime.now().strftime("%d.%m.%Y")
         
         prompt = f"""
@@ -65,9 +104,6 @@ class HoroscopeService:
         Число судьбы: {user_data.get('second', 'N/A')}
         Число души: {user_data.get('fourth', 'N/A')}
         
-        Основные аспекты личности:
-        {user_data.get('personality_aspects', '')}
-        
         Создай красивый, мотивирующий и точный гороскоп на день, который включает:
         1. Общий прогноз на день
         2. Любовные отношения
@@ -76,6 +112,7 @@ class HoroscopeService:
         5. Совет дня
         
         Будь креативным, используй эмодзи и делай текст вдохновляющим!
+        Максимальная длина: 800 символов.
         """
         
         try:
@@ -86,7 +123,7 @@ class HoroscopeService:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.7,
-                max_tokens=1500
+                max_tokens=500
             )
             
             return completion.choices[0].message.content
@@ -105,11 +142,14 @@ class HoroscopeService:
         # Парсим гороскопы
         parsed_horoscopes = await self.parse_horoscopes(zodiac_sign)
         
-        # Генерируем AI гороскоп
-        ai_horoscope = await self.generate_ai_horoscope(user_data, zodiac_sign)
+        # Генерируем AI гороскоп, если доступно
+        ai_horoscope = ""
+        if self.groq_client and Config.GROQ_API_KEY:
+            ai_horoscope = await self.generate_ai_horoscope(user_data, zodiac_sign)
         
         # Комбинируем результаты
-        result = f"""
+        if ai_horoscope and not ai_horoscope.startswith("❌"):
+            result = f"""
 ✨ *ПЕРСОНАЛЬНЫЙ ГОРОСКОП* ✨
 📅 {datetime.now().strftime("%d.%m.%Y")}
 ♈ Знак зодиака: {zodiac_sign}
@@ -120,11 +160,22 @@ class HoroscopeService:
 
 📊 *Сводка с других источников* 📊
 
-{parsed_horoscopes if parsed_horoscopes else 'Нет данных с внешних источников'}
+{parsed_horoscopes}
 
 💫 *Совет от нумеролога* 💫
 Используйте число {user_data.get('second', '1')} как ваш талисман сегодня!
-        """
+            """
+        else:
+            result = f"""
+✨ *ГОРОСКОП НА СЕГОДНЯ* ✨
+📅 {datetime.now().strftime("%d.%m.%Y")}
+♈ Знак зодиака: {zodiac_sign}
+
+{parsed_horoscopes}
+
+💫 *Совет дня* 💫
+Сегодня благоприятный день для новых начинаний! Используйте число {user_data.get('second', '1')} как ваш талисман.
+            """
         
         # Сохраняем в кэш
         self.cache[cache_key] = result
