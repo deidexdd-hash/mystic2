@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import os
 from aiohttp import web
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
@@ -276,6 +277,16 @@ async def health_check(request):
 
 async def start_bot():
     """Запуск бота"""
+    # Проверяем токен
+    if not Config.BOT_TOKEN:
+        logger.error("❌ ОШИБКА: Не задан токен бота!")
+        logger.error("Пожалуйста, задайте BOT_TOKEN в переменных окружения")
+        logger.error("На Render: Settings -> Environment Variables")
+        print("❌ ОШИБКА: Не задан токен бота!")
+        return
+    
+    logger.info(f"✅ Токен бота загружен. Длина: {len(Config.BOT_TOKEN)} символов")
+    
     bot = NumerologyBot()
     
     # Создаем приложение
@@ -297,7 +308,7 @@ async def start_bot():
     application.add_error_handler(bot.error_handler)
     
     # Запускаем бота
-    print("🤖 Бот запущен...")
+    logger.info("🤖 Бот запущен...")
     await application.initialize()
     await application.start()
     await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
@@ -305,6 +316,21 @@ async def start_bot():
 def main():
     """Главная функция"""
     import threading
+    
+    # Проверяем переменные окружения
+    logger.info(f"PORT: {os.environ.get('PORT', 8080)}")
+    logger.info(f"BOT_TOKEN присутствует: {'BOT_TOKEN' in os.environ}")
+    
+    if not Config.BOT_TOKEN:
+        logger.error("❌ КРИТИЧЕСКАЯ ОШИБКА: BOT_TOKEN не задан!")
+        logger.error("Добавьте переменную окружения BOT_TOKEN в Render:")
+        logger.error("Settings -> Environment Variables")
+        print("=" * 60)
+        print("❌ КРИТИЧЕСКАЯ ОШИБКА: BOT_TOKEN не задан!")
+        print("Добавьте переменную окружения BOT_TOKEN в Render:")
+        print("Settings -> Environment Variables")
+        print("=" * 60)
+        return
     
     # Запускаем бота в отдельном потоке
     loop = asyncio.new_event_loop()
@@ -321,8 +347,8 @@ def main():
     app.router.add_get('/health', health_check)
     
     port = int(os.environ.get('PORT', 8080))
+    logger.info(f"🌐 Веб-сервер запущен на порту {port}")
     web.run_app(app, host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
-    import os
     main()
