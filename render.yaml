@@ -1,12 +1,12 @@
 services:
   - type: web
-    name: numerology-bot
+    name: mystic2-bot
     env: python
     plan: free
-    pythonVersion: "3.11"      # 3.13.4 не подходит, используем 3.11
+    pythonVersion: "3.13"          # 3.13 поддерживается, но 3.11 тоже работает
     buildCommand: pip install --no-cache-dir -r requirements.txt
-    startCommand: python src/main.py   # <-- путь к вашему скрипту
-    port: 8080
+    startCommand: python main.py
+    port: 8080                     # Render передаёт реальный порт в $PORT
     healthCheckPath: /health
     healthCheckTimeout: 30s
 
@@ -20,6 +20,7 @@ services:
 
     autoDeploy: true
 
+    # (опционально) cron‑job, если понадобится периодическая задача
     cronJobs:
       - name: daily-cron
         schedule: "0 0 * * *"
