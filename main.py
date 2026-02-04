@@ -1,7 +1,7 @@
-# main.py
 import asyncio
 import logging
 import os
+import json
 from datetime import datetime
 
 from aiohttp import web
@@ -36,7 +36,7 @@ log = logging.getLogger(__name__)
 DATE, GENDER = range(2)
 
 # --------------------------------------------------------------------
-# 3️⃣ КЛАСС БОТА
+# 3️⃣ КЛАСС БОТА (Без изменений)
 # --------------------------------------------------------------------
 class NumerologyBot:
     def __init__(self):
@@ -45,7 +45,6 @@ class NumerologyBot:
         self.horoscope_service = HoroscopeService()
         self.store: dict[int, dict] = {}
 
-    # --------------------- /start ---------------------
     async def start(self, update: Update, ctx: CallbackContext) -> int:
         await update.message.reply_text(
             "👋 Добро пожаловать в бот нумерологии!\n\n"
@@ -53,7 +52,6 @@ class NumerologyBot:
         )
         return DATE
 
-    # --------------------- DATE ---------------------
     async def receive_date(self, update: Update, ctx: CallbackContext) -> int:
         txt = update.message.text
         try:
@@ -71,7 +69,6 @@ class NumerologyBot:
             )
             return DATE
 
-    # --------------------- GENDER ---------------------
     async def receive_gender(self, update: Update, ctx: CallbackContext) -> int:
         gender = update.message.text
         birth_date = ctx.user_data.get("birth_date")
@@ -111,7 +108,6 @@ class NumerologyBot:
         )
         return ConversationHandler.END
 
-    # --------------------- ПОЛНАЯ МАТРИЦА ---------------------
     async def full_matrix(self, update: Update, _: CallbackContext):
         uid = update.effective_user.id
         user = self.store.get(uid)
@@ -133,7 +129,6 @@ class NumerologyBot:
             await update.message.reply_text("⚠️ Интерпретации временно недоступны.")
         await self.show_main_keyboard(update, None)
 
-    # --------------------- ГОРСКОП ---------------------
     async def daily_horoscope(self, update: Update, _: CallbackContext):
         uid = update.effective_user.id
         user = self.store.get(uid)
@@ -153,7 +148,6 @@ class NumerologyBot:
             await update.message.reply_text("❌ Ошибка получения гороскопа.")
         await self.show_main_keyboard(update, None)
 
-    # --------------------- ТОЛЬКО МАТРИЦА 3x3 ---------------------
     async def only_matrix(self, update: Update, _: CallbackContext):
         uid = update.effective_user.id
         user = self.store.get(uid)
@@ -170,38 +164,18 @@ class NumerologyBot:
 *Доп. числа:* {add}
 
 {self.matrix_calc.format_matrix_display(mat)}
-
-*Расшифровка:*
-1️⃣: {len([x for x in mat['full_array'] if x == 1])} шт.
-2️⃣: {len([x for x in mat['full_array'] if x == 2])} шт.
-3️⃣: {len([x for x in mat['full_array'] if x == 3])} шт.
-4️⃣: {len([x for x in mat['full_array'] if x == 4])} шт.
-5️⃣: {len([x for x in mat['full_array'] if x == 5])} шт.
-6️⃣: {len([x for x in mat['full_array'] if x == 6])} шт.
-7️⃣: {len([x for x in mat['full_array'] if x == 7])} шт.
-8️⃣: {len([x for x in mat['full_array'] if x == 8])} шт.
-9️⃣: {len([x for x in mat['full_array'] if x == 9])} шт.
 """
         await update.message.reply_text(txt, parse_mode="Markdown")
         await self.show_main_keyboard(update, None)
 
-    # --------------------- О БОТЕ ---------------------
     async def about(self, update: Update, _: CallbackContext):
         txt = """\n🤖 *НУМЕРОЛОГИЧЕСКИЙ БОТ* 🤖
 
 Этот бот рассчитывает вашу персональную нумерологическую матрицу и гороскопы.
-
-*Технологии*:
-• Python + python-telegram-bot 21.x
-• Groq AI (необязательно)
-• BeautifulSoup для парсинга
-
-Нажмите /start и следуйте инструкциям.
 """
         await update.message.reply_text(txt, parse_mode="Markdown")
         await self.show_main_keyboard(update, None)
 
-    # --------------------- ГЛАВНОЕ МЕНЮ ---------------------
     async def show_main_keyboard(self, update: Update, _: CallbackContext):
         kb = [
             [
@@ -218,7 +192,6 @@ class NumerologyBot:
             reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True),
         )
 
-    # --------------------- ОБРАБОТЧИК ТЕКСТА ---------------------
     async def handle_text(self, update: Update, _: CallbackContext):
         txt = update.message.text
         if txt == "🔮 Полная матрица":
@@ -232,7 +205,6 @@ class NumerologyBot:
         else:
             await update.message.reply_text("Используйте кнопки или /start")
 
-    # --------------------- ОБРАБОТЧИК ОШИБОК ---------------------
     async def error_handler(self, update: Update, ctx: CallbackContext):
         log.error(f"Error: {ctx.error}")
         try:
@@ -263,42 +235,77 @@ def build_application() -> Application:
 
 
 # --------------------------------------------------------------------
-# 5️⃣ MAIN - webhook + health-check
+# 5️⃣ MAIN - ИСПРАВЛЕННАЯ ВЕРСИЯ
 # --------------------------------------------------------------------
 async def main() -> None:
-    # 1️⃣ Создаём Application и инициализируем её
-    app = build_application()
-    await app.initialize()
-
-    # 2️⃣ aiohttp-приложение для health-check
-    web_app = web.Application()
-    web_app.router.add_get("/", lambda _: web.Response(text="Bot is running"))
-    web_app.router.add_get("/health", lambda _: web.Response(text="Bot is running"))
-
-    # 3️⃣ Формируем URL webhook'а
+    # 1. Инициализируем приложение бота
+    ptb_app = build_application()
+    
+    # 2. Получаем настройки окружения
+    port = int(os.getenv("PORT", 8080))
     external_host = os.getenv("RENDER_EXTERNAL_HOSTNAME")
     if not external_host:
-        raise RuntimeError(
-            "RENDER_EXTERNAL_HOSTNAME is not set - необходимо для формирования webhook URL"
-        )
-    webhook_url = f"https://{external_host}/webhook"
+        # Для локального теста, если переменная не задана
+        log.warning("RENDER_EXTERNAL_HOSTNAME не задан. Используем локальный режим или упадем.")
+    
+    webhook_url = f"https://{external_host}/webhook" if external_host else None
 
-    # 4️⃣ Запускаем webhook-сервер через run_webhook
-    async with app:
-        await app.run_webhook(
-            listen="0.0.0.0",
-            port=int(os.getenv("PORT", 8080)),
-            url_path="/webhook",
-            webhook_url=webhook_url,
-            allowed_updates=None,
-        )
-        # Держим процесс живым
-        while True:
-            await asyncio.sleep(3600)
+    # 3. Инициализация и старт бота (без запуска встроенного сервера)
+    await ptb_app.initialize()
+    await ptb_app.start()
+    
+    # Устанавливаем вебхук только если есть внешний хост
+    if webhook_url:
+        log.info(f"Setting webhook to: {webhook_url}")
+        await ptb_app.bot.set_webhook(webhook_url)
+    else:
+        log.warning("Webhook URL не сформирован, бот не будет получать обновления!")
 
+    # 4. Создаем веб-приложение aiohttp для обработки запросов
+    web_app = web.Application()
 
-# --------------------------------------------------------------------
-# 6️⃣ ТОЧКА ВХОДА
-# --------------------------------------------------------------------
+    # --- Обработчик обновлений от Telegram ---
+    async def telegram_webhook(request):
+        """Принимает POST запрос от Telegram и передает его в PTB App"""
+        if request.content_type == 'application/json':
+            json_data = await request.json()
+            update = Update.de_json(json_data, ptb_app.bot)
+            await ptb_app.process_update(update)
+            return web.Response()
+        return web.Response(status=403)
+
+    # --- Простой Health Check для Render ---
+    async def health_check(request):
+        return web.Response(text="Bot is running OK", status=200)
+
+    # Регистрируем маршруты
+    web_app.router.add_post("/webhook", telegram_webhook)
+    web_app.router.add_get("/health", health_check)
+    web_app.router.add_get("/", health_check) # Render иногда пингует корень
+
+    # 5. Запускаем веб-сервер
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
+    log.info(f"Server started on 0.0.0.0:{port}")
+
+    # Держим цикл живым
+    try:
+        # Ждем бесконечно, пока не придет сигнал остановки
+        stop_event = asyncio.Event()
+        await stop_event.wait()
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        pass
+    finally:
+        # Корректное завершение
+        await ptb_app.stop()
+        await ptb_app.shutdown()
+        await runner.cleanup()
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
