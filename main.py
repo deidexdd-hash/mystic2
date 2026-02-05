@@ -41,7 +41,15 @@ class NumerologyBot:
         )
 
     async def request_date(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Запрос даты рождения."""
+        """Запрос пола пользователя."""
+        reply_keyboard = [['👨 Мужской', '👩 Женский']]
+        await update.message.reply_text(
+            "Укажите ваш пол:",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
+        )
+    
+    async def request_birthdate(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Запрос даты рождения после выбора пола."""
         await update.message.reply_text(
             "Введите дату вашего рождения в формате: *ДД.ММ.ГГГГ*\n"
             "(Например: 15.05.1992)",
@@ -58,8 +66,24 @@ class NumerologyBot:
             await self.request_date(update, context)
             return
 
+        # Обработка выбора пола
+        if text in ["👨 Мужской", "👩 Женский"]:
+            gender = "мужской" if "Мужской" in text else "женский"
+            
+            # Сохраняем пол пользователя
+            if uid not in user_store:
+                user_store[uid] = {}
+            user_store[uid]["gender"] = gender
+            
+            await self.request_birthdate(update, context)
+            return
+
         if text == "📊 Моя Матрица":
             await self.show_matrix(update, context)
+            return
+        
+        if text == "📖 Интерпретации":
+            await self.show_interpretations(update, context)
             return
         
         if text == "🔮 Гороскоп на сегодня":
@@ -74,6 +98,13 @@ class NumerologyBot:
         try:
             birth_date = datetime.strptime(text, "%d.%m.%Y")
             
+            # Проверяем наличие пола
+            user = user_store.get(uid, {})
+            if not user.get("gender"):
+                await update.message.reply_text("⚠️ Сначала укажите ваш пол")
+                await self.request_date(update, context)
+                return
+            
             # Расчет матрицы
             matrix = self.matrix_calc.calculate_matrix(text)
             if not matrix:
@@ -84,14 +115,13 @@ class NumerologyBot:
             matrix["zodiac"] = zodiac
             
             # Сохраняем данные
-            user_store[uid] = {
-                "matrix": matrix,
-                "date": text,
-                "zodiac": zodiac
-            }
+            user_store[uid]["matrix"] = matrix
+            user_store[uid]["date"] = text
+            user_store[uid]["zodiac"] = zodiac
 
             reply_keyboard = [
-                ['📊 Моя Матрица', '🔮 Гороскоп на сегодня'],
+                ['📊 Моя Матрица', '📖 Интерпретации'],
+                ['🔮 Гороскоп на сегодня'],
                 ['📝 Сменить дату']
             ]
             await update.message.reply_text(
@@ -119,14 +149,56 @@ class NumerologyBot:
         # Вызываем метод красивой отрисовки из MatrixCalculator
         matrix_table = self.matrix_calc.format_matrix_display(user["matrix"])
         
+        # Формируем дополнительные числа
+        additional = user["matrix"].get("additional", [])
+        additional_str = '.'.join(map(str, additional))
+        
         response = (
             f"📊 *ВАША ПСИХОМАТРИЦА*\n"
             f"📅 Дата: `{user['date']}`\n"
-            f"✨ Знак: *{user['zodiac']}*\n\n"
+            f"✨ Знак: *{user['zodiac']}*\n"
+            f"🔢 Доп. числа: `{additional_str}`\n\n"
             f"```\n{matrix_table}\n```\n"
             f"💡 _Каждая ячейка отражает силу ваших врожденных качеств._"
         )
         await update.message.reply_text(response, parse_mode="Markdown")
+    
+    async def show_interpretations(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Вывод интерпретаций матрицы с учетом пола."""
+        uid = update.effective_user.id
+        user = user_store.get(uid)
+
+        if not user or not user.get("matrix"):
+            await self.request_date(update, context)
+            return
+        
+        gender = user.get("gender", "мужской")
+        
+        # Получаем интерпретации
+        interpretations = self.matrix_calc.get_interpretations(user["matrix"], gender)
+        
+        # Telegram имеет лимит на длину сообщения, разбиваем если нужно
+        if len(interpretations) > 4000:
+            # Разбиваем по двойным переносам строк
+            parts = interpretations.split('\n\n')
+            current_message = []
+            current_length = 0
+            
+            for part in parts:
+                if current_length + len(part) + 2 > 4000:
+                    # Отправляем накопленное
+                    await update.message.reply_text('\n\n'.join(current_message), parse_mode="Markdown")
+                    current_message = [part]
+                    current_length = len(part)
+                else:
+                    current_message.append(part)
+                    current_length += len(part) + 2
+            
+            # Отправляем остаток
+            if current_message:
+                await update.message.reply_text('\n\n'.join(current_message), parse_mode="Markdown")
+        else:
+            await update.message.reply_text(interpretations, parse_mode="Markdown")
 
     async def daily_horoscope(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Вывод агрегированного гороскопа."""
