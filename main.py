@@ -15,7 +15,7 @@ from telegram.ext import (
 
 from matrix_calculator import MatrixCalculator
 
-TOKEN = "YOUR_BOT_TOKEN"
+TOKEN = "8133737832:AAEMSScdsl7YQ1c7LdSXsIoBKm-Kbxy6PrQ"
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
