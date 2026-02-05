@@ -33,7 +33,7 @@ class NumerologyBot:
         self.horoscope_service = HoroscopeService()
 
     def get_main_keyboard(self):
-        """Клавиатура главного меню (нижняя)"""
+        """Клавиатура главного меню"""
         keyboard = [
             ['📊 Моя Матрица', '📖 Интерпретации'],
             ['🔮 Гороскоп на сегодня', '🔄 Сбросить данные']
@@ -54,7 +54,7 @@ class NumerologyBot:
         )
 
     async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработка нажатий на кнопки под сообщениями"""
+        """Обработка нажатий Inline-кнопок"""
         query = update.callback_query
         await query.answer()
         uid = query.from_user.id
@@ -70,16 +70,15 @@ class NumerologyBot:
             if uid not in user_store: user_store[uid] = {}
             user_store[uid]["gender"] = gender
             
-            # Проверка дублирования ввода
             if "temp_date" in user_store[uid]:
                 saved_date = user_store[uid].pop("temp_date")
-                await query.edit_message_text(f"✅ Пол выбран: <b>{gender}</b>. Рассчитываю для <b>{saved_date}</b>...", parse_mode="HTML")
+                await query.edit_message_text(f"✅ Пол: <b>{gender}</b>. Считаю для <b>{saved_date}</b>...", parse_mode="HTML")
                 await self.process_birth_date(update, context, saved_date)
             else:
-                await query.edit_message_text(f"✅ Пол выбран: <b>{gender}</b>. Теперь введите дату рождения (ДД.ММ.ГГГГ):", parse_mode="HTML")
+                await query.edit_message_text(f"✅ Пол выбран: <b>{gender}</b>. Теперь введите дату (ДД.ММ.ГГГГ):", parse_mode="HTML")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработка текстовых команд меню"""
+        """Обработка текста и меню"""
         text = update.message.text
         uid = update.effective_user.id
 
@@ -91,20 +90,18 @@ class NumerologyBot:
             await self.daily_horoscope(update, context)
         elif text == '🔄 Сбросить данные':
             user_store.pop(uid, None)
-            await update.message.reply_text("Данные сброшены. Введите новую дату рождения:", reply_markup=self.get_main_keyboard())
+            await update.message.reply_text("Данные сброшены. Введите дату рождения:")
         else:
             await self.process_birth_date(update, context, text)
 
     async def process_birth_date(self, update: Update, context: ContextTypes.DEFAULT_TYPE, date_str: str):
-        """Расчет и сохранение данных"""
+        """Логика расчета"""
         uid = update.effective_user.id
         msg = update.effective_message
 
         try:
-            # Парсим дату
             birth_date_obj = datetime.strptime(date_str, "%d.%m.%Y")
             
-            # Проверяем пол
             user = user_store.get(uid, {})
             if not user.get("gender"):
                 if uid not in user_store: user_store[uid] = {}
@@ -114,10 +111,10 @@ class NumerologyBot:
                     InlineKeyboardButton("👨 Мужской", callback_data="gender_male"),
                     InlineKeyboardButton("👩 Женский", callback_data="gender_female")
                 ]]
-                await msg.reply_text("Выберите ваш пол для завершения расчета:", reply_markup=InlineKeyboardMarkup(keyboard))
+                await msg.reply_text("Выберите пол для расчета:", reply_markup=InlineKeyboardMarkup(keyboard))
                 return
 
-            # Выполняем расчет
+            # Расчет матрицы
             matrix = self.matrix_calc.calculate_matrix(date_str)
             zodiac = self._get_zodiac(birth_date_obj.day, birth_date_obj.month)
             
@@ -127,16 +124,15 @@ class NumerologyBot:
                 "zodiac": zodiac
             })
 
-            await msg.reply_text(f"🎉 Расчет готов для {date_str}!", reply_markup=self.get_main_keyboard())
-            # Автоматически показываем матрицу
+            await msg.reply_text("🎉 Матрица рассчитана!", reply_markup=self.get_main_keyboard())
             await self.show_matrix_callback(update, context)
 
         except ValueError:
             if not update.callback_query:
-                await msg.reply_text("⚠️ Формат: ДД.ММ.ГГГГ (например: 15.05.1992)")
+                await msg.reply_text("⚠️ Введите дату в формате ДД.ММ.ГГГГ (например: 15.05.1992)")
 
     async def show_matrix_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Отображение матрицы"""
+        """Вывод таблицы матрицы"""
         uid = update.effective_user.id
         msg = update.effective_message
         
@@ -145,46 +141,41 @@ class NumerologyBot:
             await msg.reply_text("Сначала введите дату рождения.")
             return
 
-        # ИСПРАВЛЕНИЕ: Передаем только 1 аргумент, как просит MatrixCalculator
-        matrix_text = self.matrix_calc.format_matrix_display(user["matrix"])
-        
-        # Экранируем спецсимволы для корректного отображения
-        safe_matrix = matrix_text.replace('-', '\\-').replace('.', '\\.').replace('(', '\\(').replace(')', '\\)')
+        # В вашем классе MatrixCalculator метод принимает только 1 аргумент (matrix_data)
+        matrix_table = self.matrix_calc.format_matrix_display(user["matrix"])
         
         header = (
             f"📅 <b>Дата:</b> {user['date']}\n"
-            f"⚧ <b>Пол:</b> {user['gender']}\n"
-            f"♈ <b>Знак:</b> {user['zodiac']}\n\n"
+            f"♈ <b>Знак:</b> {user['zodiac']}\n"
+            f"⚧ <b>Пол:</b> {user['gender']}\n\n"
         )
         
         keyboard = [[InlineKeyboardButton("📖 Читать расшифровку", callback_data="show_interp")]]
-        
         await msg.reply_text(
-            f"{header}<code>{safe_matrix}</code>",
+            f"{header}<code>{matrix_table}</code>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
     async def show_interpretations_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Вывод интерпретаций"""
+        """Вывод текстовых интерпретаций"""
         uid = update.effective_user.id
         msg = update.effective_message
         
         user = user_store.get(uid)
         if not user or "matrix" not in user:
-            await msg.reply_text("Данные для интерпретации не найдены.")
+            await msg.reply_text("Сначала рассчитайте матрицу.")
             return
 
-        from interpretations import Interpretations
-        interp_gen = Interpretations()
-        text = interp_gen.get_full_interpretation(user["matrix"], user["gender"])
+        # Использование метода get_interpretations из вашего MatrixCalculator
+        text = self.matrix_calc.get_interpretations(user["matrix"], user["gender"])
         
-        # Telegram не принимает сообщения длиннее 4096 символов
+        # Разбивка на части, если текст слишком длинный
         if len(text) > 4000:
             for i in range(0, len(text), 4000):
-                await msg.reply_text(text[i:i+4000])
+                await msg.reply_text(text[i:i+4000], parse_mode="Markdown")
         else:
-            await msg.reply_text(text)
+            await msg.reply_text(text, parse_mode="Markdown")
 
     async def daily_horoscope(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Получение гороскопа"""
@@ -193,25 +184,18 @@ class NumerologyBot:
         user = user_store.get(uid)
         
         if not user or "zodiac" not in user:
-            await msg.reply_text("Пожалуйста, сначала введите дату рождения.")
+            await msg.reply_text("Сначала введите дату рождения.")
             return
 
-        status_msg = await msg.reply_text(f"⏳ Составляю прогноз для знака {user['zodiac']}...")
+        status = await msg.reply_text(f"⏳ Получаю прогноз для знака {user['zodiac']}...")
         
         try:
             horo_text = await self.horoscope_service.get_daily_horoscope(user)
-            header = f"✨ <b>Гороскоп на сегодня ({user['zodiac']})</b> ✨\n\n"
-            
-            # Используем HTML для безопасности
-            safe_body = html.escape(horo_text)
-            
-            try:
-                await status_msg.edit_text(header + safe_body, parse_mode="HTML")
-            except:
-                await status_msg.edit_text(header + horo_text)
+            header = f"✨ <b>Гороскоп ({user['zodiac']})</b> ✨\n\n"
+            await status.edit_text(header + html.escape(horo_text), parse_mode="HTML")
         except Exception as e:
-            log.error(f"Ошибка в гороскопе: {e}")
-            await msg.reply_text("❌ Не удалось получить прогноз. Попробуйте позже.")
+            log.error(f"Ошибка гороскопа: {e}")
+            await msg.reply_text("❌ Ошибка при загрузке гороскопа.")
 
     def _get_zodiac(self, day: int, month: int) -> str:
         zodiacs = [
@@ -226,10 +210,7 @@ class NumerologyBot:
         return "♑ Козерог"
 
 def main():
-    if not Config.BOT_TOKEN:
-        log.error("BOT_TOKEN is missing!")
-        return
-
+    if not Config.BOT_TOKEN: return
     bot_logic = NumerologyBot()
     application = Application.builder().token(Config.BOT_TOKEN).build()
 
@@ -237,7 +218,6 @@ def main():
     application.add_handler(CallbackQueryHandler(bot_logic.button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot_logic.handle_message))
 
-    log.info("Бот запущен...")
     application.run_polling()
 
 if __name__ == '__main__':
