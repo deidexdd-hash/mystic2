@@ -1,7 +1,9 @@
 import os
+import threading
 import logging
 import html
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer # Добавлено для веб-сервера
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -16,6 +18,21 @@ from telegram.ext import (
 from config import Config
 from matrix_calculator import MatrixCalculator
 from horoscope_service import HoroscopeService
+
+# --- СЕКЦИЯ ДЛЯ RENDER (Health Check) ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+        self.wfile.write(b"Bot is running!")
+
+def run_health_check():
+    # Render передает порт в переменную окружения PORT
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    server.serve_forever()
+# ----------------------------------------
 
 # Настройка логирования
 logging.basicConfig(
@@ -106,7 +123,6 @@ class NumerologyBot:
                 await msg.reply_text("Выберите ваш пол:", reply_markup=InlineKeyboardMarkup(keyboard))
                 return
 
-            # Расчет
             matrix = self.matrix_calc.calculate_matrix(date_str)
             zodiac = self._get_zodiac(birth_date_obj.day, birth_date_obj.month)
             
@@ -130,7 +146,6 @@ class NumerologyBot:
             await msg.reply_text("Сначала введите дату рождения.")
             return
 
-        # ИСПРАВЛЕНИЕ TypeError: передаем только 1 аргумент
         matrix_table = self.matrix_calc.format_matrix_display(user["matrix"])
         
         info = f"👤 <b>Дата:</b> {user['date']} | {user['zodiac']}\n\n"
@@ -151,11 +166,9 @@ class NumerologyBot:
             await msg.reply_text("Данные не найдены.")
             return
 
-        # ИСПРАВЛЕНИЕ AttributeError: вызываем метод из MatrixCalculator
         try:
             text = self.matrix_calc.get_interpretations(user["matrix"], user["gender"])
             
-            # Разбиваем длинный текст (лимит Telegram 4096 символов)
             if len(text) > 4000:
                 for i in range(0, len(text), 4000):
                     await msg.reply_text(text[i:i+4000], parse_mode="Markdown")
@@ -179,18 +192,24 @@ class NumerologyBot:
         await status.edit_text(f"✨ <b>Гороскоп ({user['zodiac']})</b>\n\n{html.escape(horo)}", parse_mode="HTML")
 
     def _get_zodiac(self, day, month):
-        # Упрощенная логика знаков
         zodiacs = [(21, 3, "Овен"), (21, 4, "Телец"), (22, 5, "Близнецы"), (22, 6, "Рак"), (23, 7, "Лев"), (24, 8, "Дева"), (24, 9, "Весы"), (24, 10, "Скорпион"), (23, 11, "Стрелец"), (22, 12, "Козерог"), (21, 1, "Водолей"), (20, 2, "Рыбы")]
         for d, m, name in reversed(zodiacs):
             if (month == m and day >= d) or month > m: return name
         return "Козерог"
 
 def main():
+    # 1. Запускаем веб-сервер в фоновом потоке
+    threading.Thread(target=run_health_check, daemon=True).start()
+    log.info("Health check server started...")
+
+    # 2. Запускаем бота
     app = Application.builder().token(Config.BOT_TOKEN).build()
     bot = NumerologyBot()
     app.add_handler(CommandHandler("start", bot.start))
     app.add_handler(CallbackQueryHandler(bot.button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
+    
+    log.info("Bot starting polling...")
     app.run_polling()
 
 if __name__ == '__main__':
