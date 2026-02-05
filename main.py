@@ -2,11 +2,12 @@ import os
 import logging
 from datetime import datetime
 
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     filters,
     ContextTypes
 )
@@ -31,239 +32,241 @@ class NumerologyBot:
         self.horoscope_service = HoroscopeService()
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Команда /start: приветствие и запрос даты."""
-        reply_keyboard = [['Узнать свою судьбу 🔮']]
-        await update.message.reply_text(
-            "Привет! Я твой персональный нумеролог и астролог.\n"
-            "Я рассчитаю твою психоматрицу и составлю агрегированный гороскоп из нескольких источников.\n\n"
-            "Нажми на кнопку ниже, чтобы начать!",
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
-        )
-
-    async def request_date(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Запрос пола пользователя."""
-        reply_keyboard = [['👨 Мужской', '👩 Женский']]
-        await update.message.reply_text(
-            "Укажите ваш пол:",
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
-        )
-    
-    async def request_birthdate(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Запрос даты рождения после выбора пола."""
-        await update.message.reply_text(
-            "Введите дату вашего рождения в формате: *ДД.ММ.ГГГГ*\n"
-            "(Например: 15.05.1992)",
-            parse_mode="Markdown",
-            reply_markup=ReplyKeyboardRemove()
-        )
-
-    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Центральный обработчик текстовых сообщений."""
-        text = update.message.text
+        """Команда /start: приветствие и запрос данных."""
         uid = update.effective_user.id
+        user_name = update.effective_user.first_name or "друг"
+        
+        # Проверяем, есть ли уже данные пользователя
+        existing_user = user_store.get(uid)
+        
+        if existing_user and existing_user.get("matrix"):
+            keyboard = [
+                ['📊 Моя Матрица', '📖 Интерпретации'],
+                ['🔮 Гороскоп на сегодня', '🔄 Сбросить данные']
+            ]
+            from telegram import ReplyKeyboardMarkup
+            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+            await update.message.reply_text(
+                f"С возвращением, {user_name}! Что посчитаем сегодня?",
+                reply_markup=reply_markup
+            )
+        else:
+            await update.message.reply_text(
+                f"Привет, {user_name}! ✨\n\nЯ помогу тебе рассчитать твою Матрицу Судьбы и составить персональный гороскоп.\n\n"
+                "Для начала введите вашу дату рождения в формате: *ДД.ММ.ГГГГ*\n"
+                "Например: 15.05.1992",
+                parse_mode="Markdown"
+            )
 
-        if text == "Узнать свою судьбу 🔮":
-            await self.request_date(update, context)
-            return
+    async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка нажатий на Inline-кнопки"""
+        query = update.callback_query
+        await query.answer()
+        uid = query.from_user.id
 
-        # Обработка выбора пола
-        if text in ["👨 Мужской", "👩 Женский"]:
-            gender = "мужской" if "Мужской" in text else "женский"
+        if query.data == "show_matrix":
+            await self.show_matrix_callback(query, context)
+        
+        elif query.data == "show_interp":
+            await self.show_interpretations_callback(query, context)
+
+        elif query.data == "get_horoscope":
+            await self.daily_horoscope_callback(query, context)
+
+        elif query.data.startswith("gender_"):
+            gender = "мужской" if query.data == "gender_male" else "женский"
             
-            # Сохраняем пол пользователя
             if uid not in user_store:
                 user_store[uid] = {}
             user_store[uid]["gender"] = gender
             
-            await self.request_birthdate(update, context)
-            return
-
-        if text == "📊 Моя Матрица":
-            await self.show_matrix(update, context)
-            return
-        
-        if text == "📖 Интерпретации":
-            await self.show_interpretations(update, context)
-            return
-        
-        if text == "🔮 Гороскоп на сегодня":
-            await self.daily_horoscope(update, context)
-            return
-        
-        if text == "📝 Сменить дату":
-            await self.request_date(update, context)
-            return
-
-        # Попытка обработать ввод даты
-        try:
-            birth_date = datetime.strptime(text, "%d.%m.%Y")
+            gender_emoji = "👨" if gender == "мужской" else "👩"
             
+            # ПРОВЕРКА ДУБЛИРОВАНИЯ: если дата уже была введена ранее
+            if "temp_date" in user_store[uid]:
+                saved_date = user_store[uid].pop("temp_date")
+                await query.edit_message_text(
+                    f"{gender_emoji} Пол выбран: *{gender}*\n📅 Провожу расчет для даты: *{saved_date}*...",
+                    parse_mode="Markdown"
+                )
+                # Вызываем процесс обработки даты напрямую
+                await self.process_birth_date(query, context, saved_date)
+            else:
+                await query.edit_message_text(
+                    f"{gender_emoji} Пол выбран: *{gender}*.\n\nТеперь введите вашу дату рождения (ДД.ММ.ГГГГ):",
+                    parse_mode="Markdown"
+                )
+
+    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Основной обработчик текстовых сообщений"""
+        text = update.message.text
+        uid = update.effective_user.id
+
+        if text == '📊 Моя Матрица':
+            await self.show_matrix_callback(update, context)
+        elif text == '📖 Интерпретации':
+            await self.show_interpretations_callback(update, context)
+        elif text == '🔮 Гороскоп на сегодня':
+            await self.daily_horoscope(update, context)
+        elif text == '🔄 Сбросить данные':
+            user_store.pop(uid, None)
+            await update.message.reply_text("Данные сброшены. Введите новую дату рождения (ДД.ММ.ГГГГ):")
+        else:
+            # Пытаемся распарсить дату
+            await self.process_birth_date(update, context, text)
+
+    async def process_birth_date(self, update: Update, context: ContextTypes.DEFAULT_TYPE, date_str: str):
+        """Логика расчета матрицы"""
+        uid = update.effective_user.id
+        # Определяем, откуда пришел вызов (сообщение или кнопка)
+        msg_obj = update.message if update.message else update.callback_query.message
+        
+        try:
+            # Проверка формата даты
+            birth_date_obj = datetime.strptime(date_str, "%d.%m.%Y")
+            if not (1900 <= birth_date_obj.year <= 2026):
+                await msg_obj.reply_text("Пожалуйста, введите корректный год (от 1900 до 2026).")
+                return
+
             # Проверяем наличие пола
             user = user_store.get(uid, {})
             if not user.get("gender"):
-                await update.message.reply_text("⚠️ Сначала укажите ваш пол")
-                await self.request_date(update, context)
-                return
-            
-            # Расчет матрицы
-            matrix = self.matrix_calc.calculate_matrix(text)
-            if not matrix:
-                await update.message.reply_text("❌ Не удалось рассчитать матрицу. Проверьте дату.")
+                if uid not in user_store: user_store[uid] = {}
+                user_store[uid]["temp_date"] = date_str  # Сохраняем дату, чтобы не запрашивать дважды
+                
+                keyboard = [
+                    [
+                        InlineKeyboardButton("👨 Мужской", callback_data="gender_male"),
+                        InlineKeyboardButton("👩 Женский", callback_data="gender_female")
+                    ]
+                ]
+                await msg_obj.reply_text(
+                    "Для точного расчета выберите ваш пол:",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
                 return
 
-            zodiac = self._get_zodiac(birth_date.day, birth_date.month)
-            matrix["zodiac"] = zodiac
+            # Если пол есть, считаем
+            status_msg = await msg_obj.reply_text("🔮 Звезды выстраиваются в ряд... Считаю вашу матрицу...")
             
-            # Сохраняем данные
-            user_store[uid]["matrix"] = matrix
-            user_store[uid]["date"] = text
-            user_store[uid]["zodiac"] = zodiac
+            matrix = self.matrix_calc.calculate_matrix(date_str)
+            zodiac = self._get_zodiac(birth_date_obj.day, birth_date_obj.month)
+            
+            user_store[uid].update({
+                "matrix": matrix,
+                "date": date_str,
+                "zodiac": zodiac
+            })
 
-            reply_keyboard = [
-                ['📊 Моя Матрица', '📖 Интерпретации'],
-                ['🔮 Гороскоп на сегодня'],
-                ['📝 Сменить дату']
-            ]
-            await update.message.reply_text(
-                f"✅ Данные приняты! Ваш знак: *{zodiac}*.",
-                parse_mode="Markdown",
-                reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+            from telegram import ReplyKeyboardMarkup
+            keyboard = [['📊 Моя Матрица', '📖 Интерпретации'], ['🔮 Гороскоп на сегодня', '🔄 Сбросить данные']]
+            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+            await status_msg.delete()
+            await msg_obj.reply_text(
+                f"✅ Расчет готов для даты {date_str}!\nВоспользуйтесь меню ниже для просмотра.",
+                reply_markup=reply_markup
             )
-            
-            # Автоматический показ матрицы после ввода даты
-            await self.show_matrix(update, context)
+            await self.show_matrix_callback(update, context)
 
         except ValueError:
-            if not text.startswith('/'):
-                await update.message.reply_text("⚠️ Введите дату корректно (ДД.ММ.ГГГГ), например: 01.01.1990")
+            if not update.callback_query: # Не отвечаем на ошибки, если это был автоматический вызов
+                await msg_obj.reply_text("Неверный формат даты. Используйте: ДД.ММ.ГГГГ (например, 15.05.1992)")
 
-    async def show_matrix(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Вывод психоматрицы в моноширинном формате."""
-        uid = update.effective_user.id
+    async def show_matrix_callback(self, update_or_query, context):
+        """Отображение таблицы матрицы"""
+        is_query = hasattr(update_or_query, "callback_query") or hasattr(update_or_query, "data")
+        uid = update_or_query.from_user.id if is_query else update_or_query.effective_user.id
+        msg = update_or_query.message if is_query else update_or_query.message
+        
         user = user_store.get(uid)
-
-        if not user:
-            await self.request_date(update, context)
+        if not user or "matrix" not in user:
+            await msg.reply_text("Сначала введите дату рождения.")
             return
 
-        # Вызываем метод красивой отрисовки из MatrixCalculator
-        matrix_table = self.matrix_calc.format_matrix_display(user["matrix"])
+        matrix_text = self.matrix_calc.format_matrix_display(user["matrix"], user["date"], user["zodiac"], user["gender"])
         
-        # Формируем дополнительные числа
-        additional = user["matrix"].get("additional", [])
-        additional_str = '.'.join(map(str, additional))
-        
-        response = (
-            f"📊 *ВАША ПСИХОМАТРИЦА*\n"
-            f"📅 Дата: `{user['date']}`\n"
-            f"✨ Знак: *{user['zodiac']}*\n"
-            f"🔢 Доп. числа: `{additional_str}`\n\n"
-            f"```\n{matrix_table}\n```\n"
-            f"💡 _Каждая ячейка отражает силу ваших врожденных качеств._"
-        )
-        await update.message.reply_text(response, parse_mode="Markdown")
-    
-    async def show_interpretations(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Вывод интерпретаций матрицы с учетом пола."""
-        uid = update.effective_user.id
-        user = user_store.get(uid)
+        keyboard = [[InlineKeyboardButton("📖 Читать интерпретации", callback_data="show_interp")]]
+        await msg.reply_text(f"```{matrix_text}```", parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(keyboard))
 
-        if not user or not user.get("matrix"):
-            await self.request_date(update, context)
-            return
+    async def show_interpretations_callback(self, update_or_query, context):
+        uid = update_or_query.from_user.id if hasattr(update_or_query, "data") else update_or_query.effective_user.id
+        msg = update_or_query.message if hasattr(update_or_query, "data") else update_or_query.message
         
-        gender = user.get("gender", "мужской")
+        user = user_store.get(uid)
+        from interpretations import Interpretations
+        interp_gen = Interpretations()
+        text = interp_gen.get_full_interpretation(user["matrix"], user["gender"])
         
-        # Получаем интерпретации
-        interpretations = self.matrix_calc.get_interpretations(user["matrix"], gender)
-        
-        # Telegram имеет лимит на длину сообщения, разбиваем если нужно
-        if len(interpretations) > 4000:
-            # Разбиваем по двойным переносам строк
-            parts = interpretations.split('\n\n')
-            current_message = []
-            current_length = 0
-            
-            for part in parts:
-                if current_length + len(part) + 2 > 4000:
-                    # Отправляем накопленное
-                    await update.message.reply_text('\n\n'.join(current_message), parse_mode="Markdown")
-                    current_message = [part]
-                    current_length = len(part)
-                else:
-                    current_message.append(part)
-                    current_length += len(part) + 2
-            
-            # Отправляем остаток
-            if current_message:
-                await update.message.reply_text('\n\n'.join(current_message), parse_mode="Markdown")
+        # Разбивка длинного текста
+        if len(text) > 4000:
+            for i in range(0, len(text), 4000):
+                await msg.reply_text(text[i:i+4000], parse_mode="Markdown")
         else:
-            await update.message.reply_text(interpretations, parse_mode="Markdown")
+            await msg.reply_text(text, parse_mode="Markdown")
 
     async def daily_horoscope(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Вывод агрегированного гороскопа."""
         uid = update.effective_user.id
         user = user_store.get(uid)
-
-        if not user:
-            await self.request_date(update, context)
+        
+        if not user or "zodiac" not in user:
+            await update.message.reply_text("Пожалуйста, сначала введите дату рождения, чтобы я узнал ваш знак зодиака.")
             return
 
-        status_msg = await update.message.reply_text("🔮 _Анализирую источники и положение планет..._", parse_mode="Markdown")
+        status_msg = await update.message.reply_text(f"⏳ Составляю прогноз для знака {user['zodiac']}...")
         
         try:
-            # Вызов AI-сервиса с асинхронным парсингом
             horo_text = await self.horoscope_service.get_daily_horoscope(user)
-            await status_msg.delete()
-            await update.message.reply_text(horo_text, parse_mode="Markdown")
+            header = f"✨ *Гороскоп на сегодня* ({user['zodiac']}) ✨\n\n"
+            
+            # ПРАВКА: Безопасная отправка Markdown
+            try:
+                await status_msg.edit_text(header + horo_text, parse_mode="Markdown")
+            except Exception:
+                await status_msg.edit_text(header + horo_text) # Если падает — шлем без разметки
+
         except Exception as e:
             log.error(f"Ошибка гороскопа: {e}")
-            await status_msg.edit_text(f"❌ Извините, сейчас звезды скрыты за тучами. Попробуйте позже.")
+            await update.message.reply_text("❌ Извините, сейчас звезды скрыты за тучами. Попробуйте позже.")
 
-    def _get_zodiac(self, day, month):
-        """Логика определения знака зодиака."""
+    async def daily_horoscope_callback(self, query, context):
+        uid = query.from_user.id
+        user = user_store.get(uid)
+        await query.message.reply_text(f"⏳ Составляю прогноз для {user['zodiac']}...")
+        horo_text = await self.horoscope_service.get_daily_horoscope(user)
+        header = f"✨ *Гороскоп на сегодня* ({user['zodiac']}) ✨\n\n"
+        
+        try:
+            await query.message.reply_text(header + horo_text, parse_mode="Markdown")
+        except Exception:
+            await query.message.reply_text(header + horo_text)
+
+    def _get_zodiac(self, day: int, month: int) -> str:
         zodiacs = [
-            (21, 3, "Овен"), (21, 4, "Телец"), (22, 5, "Близнецы"),
-            (22, 6, "Рак"), (23, 7, "Лев"), (24, 8, "Дева"),
-            (24, 9, "Весы"), (24, 10, "Скорпион"), (23, 11, "Стрелец"),
-            (22, 12, "Козерог"), (21, 1, "Водолей"), (20, 2, "Рыбы")
+            (21, 3, "♈ Овен"), (21, 4, "♉ Телец"), (22, 5, "♊ Близнецы"),
+            (22, 6, "♋ Рак"), (23, 7, "♌ Лев"), (24, 8, "♍ Дева"),
+            (24, 9, "♎ Весы"), (24, 10, "♏ Скорпион"), (23, 11, "♐ Стрелец"),
+            (22, 12, "♑ Козерог"), (21, 1, "♒ Водолей"), (20, 2, "♓ Рыбы")
         ]
         for d, m, name in reversed(zodiacs):
             if (month == m and day >= d) or month > m:
                 return name
-        return "Козерог"
+        return "♑ Козерог"
 
 def main():
-    """Точка входа (синхронная для управления циклом событий внутри PTB)."""
     bot_logic = NumerologyBot()
-    
     if not Config.BOT_TOKEN:
-        log.error("BOT_TOKEN не установлен в переменных окружения!")
+        log.error("BOT_TOKEN не установлен!")
         return
 
-    # Инициализация приложения
     application = Application.builder().token(Config.BOT_TOKEN).build()
 
-    # Регистрация обработчиков
     application.add_handler(CommandHandler("start", bot_logic.start))
+    application.add_handler(CallbackQueryHandler(bot_logic.button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot_logic.handle_message))
 
-    # Логика запуска: Webhook для Render или Polling для локальной разработки
-    port = int(os.environ.get("PORT", 10000))
-    url_path = os.environ.get("RENDER_EXTERNAL_HOSTNAME") 
-
-    if url_path:
-        log.info(f"Запуск Webhook: https://{url_path}/webhook")
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path="webhook",
-            webhook_url=f"https://{url_path}/webhook"
-        )
-    else:
-        log.info("Запуск локального Polling...")
-        application.run_polling()
+    # Запуск
+    application.run_polling()
 
 if __name__ == '__main__':
-    # ВАЖНО: В PTB v20+ не используем asyncio.run() для run_polling/run_webhook
     main()
