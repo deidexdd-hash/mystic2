@@ -1,197 +1,168 @@
-import os
 import logging
-from datetime import datetime
-
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
+    CallbackQueryHandler,
     MessageHandler,
+    ContextTypes,
     filters,
-    ContextTypes
 )
 
-from config import Config
 from matrix_calculator import MatrixCalculator
-from horoscope_service import HoroscopeService
 
-# Настройка логирования
+TOKEN = "YOUR_BOT_TOKEN"
+
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
 )
-log = logging.getLogger(__name__)
 
-# Хранилище пользователей в памяти
-user_store = {}
+calc = MatrixCalculator()
 
-class NumerologyBot:
-    def __init__(self):
-        self.matrix_calc = MatrixCalculator()
-        self.horoscope_service = HoroscopeService()
 
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Команда /start: приветствие и запрос даты."""
-        reply_keyboard = [['Узнать свою судьбу 🔮']]
-        await update.message.reply_text(
-            "Привет! Я твой персональный нумеролог и астролог.\n"
-            "Я рассчитаю твою психоматрицу и составлю агрегированный гороскоп из нескольких источников.\n\n"
-            "Нажми на кнопку ниже, чтобы начать!",
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
-        )
-
-    async def request_date(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Запрос даты рождения."""
-        await update.message.reply_text(
-            "Введите дату вашего рождения в формате: *ДД.ММ.ГГГГ*\n"
-            "(Например: 15.05.1992)",
-            parse_mode="Markdown",
-            reply_markup=ReplyKeyboardRemove()
-        )
-
-    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Центральный обработчик текстовых сообщений."""
-        text = update.message.text
-        uid = update.effective_user.id
-
-        if text == "Узнать свою судьбу 🔮":
-            await self.request_date(update, context)
-            return
-
-        if text == "📊 Моя Матрица":
-            await self.show_matrix(update, context)
-            return
-        
-        if text == "🔮 Гороскоп на сегодня":
-            await self.daily_horoscope(update, context)
-            return
-        
-        if text == "📝 Сменить дату":
-            await self.request_date(update, context)
-            return
-
-        # Попытка обработать ввод даты
-        try:
-            birth_date = datetime.strptime(text, "%d.%m.%Y")
-            
-            # Расчет матрицы
-            matrix = self.matrix_calc.calculate_matrix(text)
-            if not matrix:
-                await update.message.reply_text("❌ Не удалось рассчитать матрицу. Проверьте дату.")
-                return
-
-            zodiac = self._get_zodiac(birth_date.day, birth_date.month)
-            matrix["zodiac"] = zodiac
-            
-            # Сохраняем данные
-            user_store[uid] = {
-                "matrix": matrix,
-                "date": text,
-                "zodiac": zodiac
-            }
-
-            reply_keyboard = [
-                ['📊 Моя Матрица', '🔮 Гороскоп на сегодня'],
-                ['📝 Сменить дату']
-            ]
-            await update.message.reply_text(
-                f"✅ Данные приняты! Ваш знак: *{zodiac}*.",
-                parse_mode="Markdown",
-                reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
-            )
-            
-            # Автоматический показ матрицы после ввода даты
-            await self.show_matrix(update, context)
-
-        except ValueError:
-            if not text.startswith('/'):
-                await update.message.reply_text("⚠️ Введите дату корректно (ДД.ММ.ГГГГ), например: 01.01.1990")
-
-    async def show_matrix(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Вывод психоматрицы в моноширинном формате."""
-        uid = update.effective_user.id
-        user = user_store.get(uid)
-
-        if not user:
-            await self.request_date(update, context)
-            return
-
-        # Вызываем метод красивой отрисовки из MatrixCalculator
-        matrix_table = self.matrix_calc.format_matrix_display(user["matrix"])
-        
-        response = (
-            f"📊 *ВАША ПСИХОМАТРИЦА*\n"
-            f"📅 Дата: `{user['date']}`\n"
-            f"✨ Знак: *{user['zodiac']}*\n\n"
-            f"```\n{matrix_table}\n```\n"
-            f"💡 _Каждая ячейка отражает силу ваших врожденных качеств._"
-        )
-        await update.message.reply_text(response, parse_mode="Markdown")
-
-    async def daily_horoscope(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Вывод агрегированного гороскопа."""
-        uid = update.effective_user.id
-        user = user_store.get(uid)
-
-        if not user:
-            await self.request_date(update, context)
-            return
-
-        status_msg = await update.message.reply_text("🔮 _Анализирую источники и положение планет..._", parse_mode="Markdown")
-        
-        try:
-            # Вызов AI-сервиса с асинхронным парсингом
-            horo_text = await self.horoscope_service.get_daily_horoscope(user)
-            await status_msg.delete()
-            await update.message.reply_text(horo_text, parse_mode="Markdown")
-        except Exception as e:
-            log.error(f"Ошибка гороскопа: {e}")
-            await status_msg.edit_text(f"❌ Извините, сейчас звезды скрыты за тучами. Попробуйте позже.")
-
-    def _get_zodiac(self, day, month):
-        """Логика определения знака зодиака."""
-        zodiacs = [
-            (21, 3, "Овен"), (21, 4, "Телец"), (22, 5, "Близнецы"),
-            (22, 6, "Рак"), (23, 7, "Лев"), (24, 8, "Дева"),
-            (24, 9, "Весы"), (24, 10, "Скорпион"), (23, 11, "Стрелец"),
-            (22, 12, "Козерог"), (21, 1, "Водолей"), (20, 2, "Рыбы")
+# ===== helpers =====
+def gender_keyboard():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("👨 Мужчина", callback_data="gender_men"),
+            InlineKeyboardButton("👩 Женщина", callback_data="gender_women"),
         ]
-        for d, m, name in reversed(zodiacs):
-            if (month == m and day >= d) or month > m:
-                return name
-        return "Козерог"
+    ])
 
-def main():
-    """Точка входа (синхронная для управления циклом событий внутри PTB)."""
-    bot_logic = NumerologyBot()
-    
-    if not Config.BOT_TOKEN:
-        log.error("BOT_TOKEN не установлен в переменных окружения!")
+
+# ===== handlers =====
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+
+    await update.message.reply_text(
+        "Привет ✨\n\n"
+        "Я рассчитаю твою Матрицу судьбы.\n\n"
+        "Для начала выбери пол:",
+        reply_markup=gender_keyboard()
+    )
+
+
+async def gender_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    gender = query.data.replace("gender_", "")
+    context.user_data["gender"] = gender
+
+    await query.message.reply_text(
+        "Отлично.\n\n"
+        "Теперь введи дату рождения в формате:\n"
+        "`YYYY-MM-DD`\n\n"
+        "Например: `1994-03-04`",
+        parse_mode="Markdown"
+    )
+
+
+async def birth_date_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    gender = context.user_data.get("gender")
+    if not gender:
+        await update.message.reply_text(
+            "Сначала нужно выбрать пол 👇",
+            reply_markup=gender_keyboard()
+        )
         return
 
-    # Инициализация приложения
-    application = Application.builder().token(Config.BOT_TOKEN).build()
+    date_text = update.message.text.strip()
 
-    # Регистрация обработчиков
-    application.add_handler(CommandHandler("start", bot_logic.start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot_logic.handle_message))
-
-    # Логика запуска: Webhook для Render или Polling для локальной разработки
-    port = int(os.environ.get("PORT", 10000))
-    url_path = os.environ.get("RENDER_EXTERNAL_HOSTNAME") 
-
-    if url_path:
-        log.info(f"Запуск Webhook: https://{url_path}/webhook")
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path="webhook",
-            webhook_url=f"https://{url_path}/webhook"
+    try:
+        data = calc.calculate_matrix(date_text, gender)
+    except Exception:
+        await update.message.reply_text(
+            "Дата введена неверно ❌\n"
+            "Используй формат: `YYYY-MM-DD`",
+            parse_mode="Markdown"
         )
-    else:
-        log.info("Запуск локального Polling...")
-        application.run_polling()
+        return
 
-if __name__ == '__main__':
-    # ВАЖНО: В PTB v20+ не используем asyncio.run() для run_polling/run_webhook
+    # ===== message building =====
+    matrix = data["matrix"]
+
+    matrix_view = calc.format_matrix_display(data)
+
+    text = (
+        "✨ *Твоя матрица судьбы*\n\n"
+        f"`{matrix_view}`\n\n"
+    )
+
+    for i in range(1, 10):
+        cell = matrix[str(i)]
+        if cell["value"] != f"{i}0":
+            text += (
+                f"*{i} → {cell['value']}*\n"
+                f"{cell['text']}\n\n"
+            )
+
+    await update.message.reply_text(
+        text,
+        parse_mode="Markdown"
+    )
+
+    # сохраняем second / fourth для следующего шага
+    context.user_data["additional"] = data["additional"]
+
+    await update.message.reply_text(
+        "Хочешь узнать:\n"
+        "🧠 *Личную задачу Души*\n"
+        "🧬 *Родовую задачу (ЧРП)*\n\n"
+        "Напиши: `задачи`",
+        parse_mode="Markdown"
+    )
+
+
+async def tasks_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    additional = context.user_data.get("additional")
+    gender = context.user_data.get("gender")
+
+    if not additional or not gender:
+        await update.message.reply_text(
+            "Сначала рассчитай матрицу через /start"
+        )
+        return
+
+    # second и fourth
+    second = str(additional[1])
+    fourth = str(additional[-1])
+
+    from interpretations import Interpretations
+    interp = Interpretations()
+
+    soul_task = interp.get_task(second, gender)
+    family_task = interp.get_task(fourth, gender)
+
+    text = (
+        "🧠 *Личная задача Души*\n"
+        f"{soul_task or '—'}\n\n"
+        "🧬 *Родовая задача (ЧРП)*\n"
+        f"{family_task or '—'}"
+    )
+
+    await update.message.reply_text(
+        text,
+        parse_mode="Markdown"
+    )
+
+
+# ===== main =====
+def main():
+    app = Application.builder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(gender_selected, pattern="^gender_"))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^\d{4}-\d{2}-\d{2}$"), birth_date_received))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"(?i)^задачи$"), tasks_handler))
+
+    app.run_polling()
+
+
+if __name__ == "__main__":
     main()
