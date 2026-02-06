@@ -1,6 +1,7 @@
 import os
 import logging
 from datetime import datetime
+import asyncio
 
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -16,6 +17,7 @@ from telegram.ext import (
 from config import Config
 from matrix_calculator import MatrixCalculator
 from horoscope_service import HoroscopeService
+from web_server import start_web_server
 
 # Настройка логирования
 logging.basicConfig(
@@ -664,21 +666,42 @@ def main():
     application.add_handler(CallbackQueryHandler(bot_logic.button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot_logic.handle_message))
 
-    # Логика запуска
-    port = int(os.environ.get("PORT", 10000))
-    url_path = os.environ.get("RENDER_EXTERNAL_HOSTNAME") 
+    # Запуск бота и веб-сервера
+    asyncio.run(run_bot_with_server(application))
 
-    if url_path:
-        log.info(f"Запуск Webhook: https://{url_path}/webhook")
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path="webhook",
-            webhook_url=f"https://{url_path}/webhook"
-        )
-    else:
-        log.info("Запуск локального Polling...")
-        application.run_polling()
+
+async def run_bot_with_server(application):
+    """Запуск бота и веб-сервера одновременно"""
+    port = int(os.environ.get("PORT", 8080))
+    
+    # Запускаем веб-сервер для health checks
+    log.info(f"🚀 Запуск веб-сервера на порту {port}")
+    web_runner = await start_web_server(port)
+    
+    # Инициализация бота
+    await application.initialize()
+    await application.start()
+    
+    # Запуск polling (для работы бота)
+    log.info("🤖 Запуск бота в режиме polling...")
+    await application.updater.start_polling()
+    
+    try:
+        # Держим оба сервиса запущенными
+        log.info("✅ Бот и веб-сервер успешно запущены")
+        await asyncio.Event().wait()
+    except KeyboardInterrupt:
+        log.info("⏹️ Получен сигнал остановки...")
+    finally:
+        # Корректная остановка
+        log.info("🛑 Остановка бота...")
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
+        
+        log.info("🛑 Остановка веб-сервера...")
+        await web_runner.cleanup()
+
 
 if __name__ == '__main__':
     main()

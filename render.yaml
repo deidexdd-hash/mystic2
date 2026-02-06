@@ -6,7 +6,6 @@ services:
     pythonVersion: "3.11"
     buildCommand: pip install --no-cache-dir -r requirements.txt
     startCommand: python main.py
-    port: 8080
     healthCheckPath: /health
     healthCheckTimeout: 30s
 
