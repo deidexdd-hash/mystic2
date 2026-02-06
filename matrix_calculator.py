@@ -92,15 +92,21 @@ class MatrixCalculator:
             # Дополнительные числа
             additional = matrix_data.get("additional", [])
             if len(additional) >= 4:
+                # ВАЖНО: Личная задача души = ВТОРОЕ число (index 1)
+                # Родовая задача = ЧЕТВЕРТОЕ число (index 3 или last)
                 second = str(additional[1])
-                fourth = str(additional[3])
+                fourth = str(additional[-1])  # Последнее число
                 
+                result.append("━━━━━━━━━━━━━━━━━━━━━")
                 result.append("🎯 *ЛИЧНАЯ ЗАДАЧА ДУШИ*")
+                result.append(f"_(Число {second})_\n")
                 task_text = self.interp.tasks_data.get(second, "Нет данных")
                 result.append(task_text)
                 result.append("")
                 
+                result.append("━━━━━━━━━━━━━━━━━━━━━")
                 result.append("👪 *РОДОВАЯ ЗАДАЧА (ЧРП)*")
+                result.append(f"_(Число {fourth})_\n")
                 task_text = self.interp.tasks_data.get(fourth, "Нет данных")
                 result.append(task_text)
                 result.append("")
